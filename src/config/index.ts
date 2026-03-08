@@ -8,7 +8,7 @@ const configSchema = z.object({
   JWT_SECRET: z.string().min(1, 'JWT_SECRET is required'),
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
   TREASURY_ADDRESS: z.string().min(1, 'TREASURY_ADDRESS is required'),
   SYSTEM_PRIVATE_KEY: z.string().min(1, 'SYSTEM_PRIVATE_KEY is required'),
   ENCRYPTION_KEY: z.string().length(32, 'ENCRYPTION_KEY must be 32 characters'),
