@@ -37,6 +37,7 @@ const apiRouter = express.Router();
 // Auth Routes
 const authRouter = express.Router();
 authRouter.post('/send-otp', authController.sendOTP.bind(authController));
+authRouter.post('/verify-otp', authController.verifyOTPOnly.bind(authController));
 authRouter.post('/signup', authController.signup.bind(authController));
 authRouter.post('/login', authController.login.bind(authController));
 authRouter.get('/me', authController.me.bind(authController));

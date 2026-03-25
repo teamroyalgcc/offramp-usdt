@@ -31,13 +31,34 @@ export class AuthController extends BaseController {
     try {
       const parsed = sendOtpSchema.safeParse(req.body);
       if (!parsed.success) {
-        return this.clientError(res, 'Invalid phone number');
+        return this.clientError(res, 'Invalid phone number format');
       }
 
       await authService.sendOTP(parsed.data.phoneNumber);
-      return this.ok(res, { message: 'OTP sent successfully' });
+      return this.ok(res, { 
+        success: true,
+        message: 'OTP sent successfully' 
+      });
     } catch (error: any) {
-      return this.fail(res, error);
+      console.error('[AUTH_CONTROLLER] Send OTP Error:', error.message);
+      return this.fail(res, error.message);
+    }
+  }
+
+  async verifyOTPOnly(req: Request, res: Response) {
+    try {
+      const parsed = loginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return this.clientError(res, 'Invalid verification data');
+      }
+
+      const isValid = await authService.verifyOTP(parsed.data.phoneNumber, parsed.data.otp);
+      return this.ok(res, { 
+        success: isValid,
+        message: 'OTP verified successfully' 
+      });
+    } catch (error: any) {
+      return this.clientError(res, error.message);
     }
   }
 

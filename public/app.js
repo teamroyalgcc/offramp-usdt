@@ -92,13 +92,33 @@ els.loginBtn.onclick = async () => {
 };
 
 els.signupBtn.onclick = async () => {
+  const phone = els.phoneNumber.value.trim();
+  const name = els.name.value.trim();
+  const acc = els.accountNumber.value.trim();
+  const ifsc = els.ifsc.value.trim();
+  const otp = els.otp.value.trim();
+
+  if (!phone || phone.length < 10) {
+    setStatus(els.authStatus, 'Error: Valid phone number required');
+    return;
+  }
+  if (!name || !acc || !ifsc) {
+    setStatus(els.authStatus, 'Error: All signup fields are required');
+    return;
+  }
+  if (!otp || otp.length !== 6) {
+    setStatus(els.authStatus, 'Error: Please enter the 6-digit OTP sent to your phone');
+    return;
+  }
+
   try {
+    setStatus(els.authStatus, 'Registering...');
     const data = await api('/auth/signup', 'POST', {
-      accountHolderName: els.name.value.trim(),
-      phoneNumber: els.phoneNumber.value.trim(),
-      accountNumber: els.accountNumber.value.trim(),
-      ifscCode: els.ifsc.value.trim(),
-      otp: els.otp.value.trim(),
+      accountHolderName: name,
+      phoneNumber: phone,
+      accountNumber: acc,
+      ifscCode: ifsc,
+      otp: otp,
       referralCode: els.referral.value.trim() || undefined,
     });
     token = data.token;
