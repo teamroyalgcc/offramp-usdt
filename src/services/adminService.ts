@@ -21,31 +21,45 @@ export class AdminService {
   }
 
   async login(username: string, password: string) {
-    const { data: admin, error } = await supabase
-      .from('admins')
-      .select('*')
-      .eq('username', username)
-      .maybeSingle();
-    
-    if (error || !admin) {
-      throw new Error('Invalid credentials');
+    try {
+      const { data: admin, error } = await supabase
+        .from('admins')
+        .select('*')
+        .eq('username', username)
+        .maybeSingle();
+      
+      if (error) {
+        console.error('Supabase error during admin login:', error);
+        throw new Error('Database connection error');
+      }
+      
+      if (!admin) {
+        throw new Error('Invalid credentials');
+      }
+
+      const isValid = await bcrypt.compare(password, admin.password_hash);
+      if (!isValid) {
+        // Log if it's not a bcrypt hash to help debug
+        if (!admin.password_hash.startsWith('$2')) {
+          console.warn(`Admin ${username} has an unhashed password. Please update it using bcrypt.`);
+        }
+        throw new Error('Invalid credentials');
+      }
+
+      const token = jwt.sign(
+        { id: admin.id, username: admin.username, role: admin.role },
+        config.jwtSecret,
+        { expiresIn: '8h' }
+      );
+
+      return {
+        token,
+        admin: { id: admin.id, username: admin.username, role: admin.role }
+      };
+    } catch (err: any) {
+      console.error(`Admin login failed for ${username}:`, err.message);
+      throw err;
     }
-
-    const isValid = await bcrypt.compare(password, admin.password_hash);
-    if (!isValid) {
-      throw new Error('Invalid credentials');
-    }
-
-    const token = jwt.sign(
-      { id: admin.id, username: admin.username, role: admin.role },
-      config.jwtSecret,
-      { expiresIn: '8h' }
-    );
-
-    return {
-      token,
-      admin: { id: admin.id, username: admin.username, role: admin.role }
-    };
   }
 
   async getDashboardData() {
