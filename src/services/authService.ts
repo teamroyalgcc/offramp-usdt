@@ -4,6 +4,7 @@ import config from '../config/index.js';
 import smsService from './smsService.js';
 import { v4 as uuidv4 } from 'uuid';
 import referralService from './referralService.js';
+import crypto from 'crypto';
 
 export class AuthService {
   private static instance: AuthService;
@@ -48,66 +49,99 @@ export class AuthService {
 
   async sendOTP(phoneNumber: string): Promise<boolean> {
     const normalizedPhone = this.normalizeIndianPhone(phoneNumber);
+    // Basic validation: Indian mobile starts with 6/7/8/9 and 10 digits after +91
+    if (!/^\+91[6-9]\d{9}$/.test(normalizedPhone)) {
+      throw new Error('Invalid Indian phone number');
+    }
 
+    // Resend cooldown: 30 seconds since last send
+    const { data: recentList, error: recentErr } = await supabase
+      .from('otp_verifications')
+      .select('*')
+      .eq('phone_number', normalizedPhone)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (recentErr) {
+      console.error('[AUTH_SERVICE] Recent OTP lookup error:', recentErr);
+    }
+    const recent = Array.isArray(recentList) && recentList.length ? recentList[0] : null;
+    if (recent && !recent.is_verified) {
+      const secondsSince = (Date.now() - new Date(recent.created_at).getTime()) / 1000;
+      if (secondsSince < 30) {
+        throw new Error('RESEND_COOLDOWN');
+      }
+    }
+
+    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
+    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
 
     const { error } = await supabase
-      .from('otp_store')
-      .upsert({
+      .from('otp_verifications')
+      .insert({
         phone_number: normalizedPhone,
-        otp,
-        expires_at: expiresAt,
-        attempts: 0
-      }, { onConflict: 'phone_number' });
+        otp_code: otpHash,
+        attempts: 0,
+        is_verified: false,
+        expires_at: expiresAt
+      });
 
     if (error) {
-      console.error('[AUTH_SERVICE] OTP Store Error:', error);
+      console.error('[AUTH_SERVICE] OTP insert error:', error);
       throw new Error('Failed to generate OTP');
     }
 
-    // In a production environment, this would use a real SMS gateway
+    // Real SMS via Twilio
     return await smsService.sendOTP(normalizedPhone, otp);
   }
 
   async verifyOTP(phoneNumber: string, otp: string): Promise<boolean> {
     const normalizedPhone = this.normalizeIndianPhone(phoneNumber);
-
-    const { data, error } = await supabase
-      .from('otp_store')
+    const { data: list, error } = await supabase
+      .from('otp_verifications')
       .select('*')
       .eq('phone_number', normalizedPhone)
-      .single();
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (error || !data) {
+    const record = Array.isArray(list) && list.length ? list[0] : null;
+
+    if (error || !record) {
       throw new Error('OTP not found or expired');
     }
 
-    if (new Date(data.expires_at) < new Date()) {
-      await this.deleteOTP(normalizedPhone);
+    if (record.is_verified) {
+      return true;
+    }
+
+    if (new Date(record.expires_at) < new Date()) {
       throw new Error('OTP expired');
     }
 
-    if (data.attempts >= 5) {
-      await this.deleteOTP(normalizedPhone);
+    if (record.attempts >= 5) {
       throw new Error('Too many failed attempts');
     }
 
-    if (data.otp !== otp) {
+    const inputHash = crypto.createHash('sha256').update(otp).digest('hex');
+    if (record.otp_code !== inputHash) {
       await supabase
-        .from('otp_store')
-        .update({ attempts: data.attempts + 1 })
-        .eq('phone_number', normalizedPhone);
+        .from('otp_verifications')
+        .update({ attempts: record.attempts + 1 })
+        .eq('id', record.id);
       throw new Error('Invalid OTP');
     }
 
-    await this.deleteOTP(normalizedPhone);
+    await supabase
+      .from('otp_verifications')
+      .update({ is_verified: true })
+      .eq('id', record.id);
     return true;
   }
 
   private async deleteOTP(phoneNumber: string): Promise<void> {
     await supabase
-      .from('otp_store')
+      .from('otp_verifications')
       .delete()
       .eq('phone_number', phoneNumber);
   }
