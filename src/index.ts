@@ -7,6 +7,7 @@ import config from './config/index.js';
 import authController from './controllers/authController.js';
 import walletController from './controllers/walletController.js';
 import exchangeController from './controllers/exchangeController.js';
+import bankAccountController from './controllers/bankAccountController.js';
 import adminController from './controllers/adminController.js';
 import referralController from './controllers/referralController.js';
 import { kycController } from './controllers/kycController.js';
@@ -60,6 +61,13 @@ exchangeRouter.post('/create-order', authenticate, exchangeController.createOrde
 
 apiRouter.use('/exchange', exchangeRouter);
 
+// Bank Account Routes
+const bankRouter = express.Router();
+bankRouter.post('/', authenticate, bankAccountController.addAccount.bind(bankAccountController));
+bankRouter.get('/my', authenticate, bankAccountController.listMyAccounts.bind(bankAccountController));
+
+apiRouter.use('/bank', bankRouter);
+
 // KYC Routes
 const kycRouter = express.Router();
 kycRouter.post('/verify-kyc', authenticate, upload.single('aadhaar_image'), kycController.submitKyc.bind(kycController));
@@ -87,6 +95,12 @@ adminRouter.get('/orders', adminAuth, adminController.getOrders.bind(adminContro
 adminRouter.post('/orders/:id/status', adminAuth, adminController.updateOrderStatus.bind(adminController));
 adminRouter.get('/users', adminAuth, adminController.getUsers.bind(adminController));
 adminRouter.post('/users/:id/freeze', adminAuth, adminController.freezeUser.bind(adminController));
+
+// Admin Bank APIs
+adminRouter.get('/bank-accounts', adminAuth, bankAccountController.adminListAllAccounts.bind(bankAccountController));
+adminRouter.patch('/bank-accounts/:id', adminAuth, bankAccountController.adminUpdateAccount.bind(bankAccountController));
+adminRouter.delete('/bank-accounts/:id', adminAuth, bankAccountController.adminDeleteAccount.bind(bankAccountController));
+
 adminRouter.get('/audit', adminAuth, adminController.getAuditLogs.bind(adminController));
 
 apiRouter.use('/admin', adminRouter);
