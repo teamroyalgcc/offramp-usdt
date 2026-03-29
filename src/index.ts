@@ -8,6 +8,8 @@ import authController from './controllers/authController.js';
 import walletController from './controllers/walletController.js';
 import exchangeController from './controllers/exchangeController.js';
 import bankAccountController from './controllers/bankAccountController.js';
+import withdrawalController from './controllers/withdrawalController.js';
+import payoutController from './controllers/payoutController.js';
 import adminController from './controllers/adminController.js';
 import referralController from './controllers/referralController.js';
 import { kycController } from './controllers/kycController.js';
@@ -68,6 +70,20 @@ bankRouter.get('/my', authenticate, bankAccountController.listMyAccounts.bind(ba
 
 apiRouter.use('/bank', bankRouter);
 
+// Withdrawal Routes (USDT to Wallet)
+const withdrawalRouter = express.Router();
+withdrawalRouter.post('/', authenticate, withdrawalController.requestWithdrawal.bind(withdrawalController));
+withdrawalRouter.get('/my', authenticate, withdrawalController.getMyWithdrawals.bind(withdrawalController));
+
+apiRouter.use('/withdrawal', withdrawalRouter);
+
+// Payout Routes (USDT to INR)
+const payoutRouter = express.Router();
+payoutRouter.post('/', authenticate, payoutController.requestPayout.bind(payoutController));
+payoutRouter.get('/my', authenticate, payoutController.getMyPayouts.bind(payoutController));
+
+apiRouter.use('/payout', payoutRouter);
+
 // KYC Routes
 const kycRouter = express.Router();
 kycRouter.post('/verify-kyc', authenticate, upload.single('aadhaar_image'), kycController.submitKyc.bind(kycController));
@@ -100,6 +116,16 @@ adminRouter.post('/users/:id/freeze', adminAuth, adminController.freezeUser.bind
 adminRouter.get('/bank-accounts', adminAuth, bankAccountController.adminListAllAccounts.bind(bankAccountController));
 adminRouter.patch('/bank-accounts/:id', adminAuth, bankAccountController.adminUpdateAccount.bind(bankAccountController));
 adminRouter.delete('/bank-accounts/:id', adminAuth, bankAccountController.adminDeleteAccount.bind(bankAccountController));
+
+// Admin Withdrawal APIs (USDT to Wallet)
+adminRouter.get('/withdrawals', adminAuth, withdrawalController.adminListAll.bind(withdrawalController));
+adminRouter.post('/withdrawals/:id/approve', adminAuth, withdrawalController.adminProcess.bind(withdrawalController));
+adminRouter.post('/withdrawals/:id/reject', adminAuth, withdrawalController.adminReject.bind(withdrawalController));
+
+// Admin Payout APIs (USDT to INR)
+adminRouter.get('/payouts', adminAuth, payoutController.adminListAll.bind(payoutController));
+adminRouter.post('/payouts/:id/approve', adminAuth, payoutController.adminProcess.bind(payoutController));
+adminRouter.post('/payouts/:id/reject', adminAuth, payoutController.adminReject.bind(payoutController));
 
 adminRouter.get('/audit', adminAuth, adminController.getAuditLogs.bind(adminController));
 
