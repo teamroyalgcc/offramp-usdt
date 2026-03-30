@@ -108,10 +108,15 @@ export class ExchangeService {
       });
 
       if (error) throw error;
+      
+      // The RPC returns a JSON object with 'success' and 'message' if it fails
+      if (data && data.success === false) {
+        throw new Error(data.message || 'Exchange failed');
+      }
 
       return {
         success: true,
-        orderId: data,
+        orderId: data.order_id || data,
         inrAmount,
         rate
       };

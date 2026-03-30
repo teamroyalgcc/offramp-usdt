@@ -151,9 +151,18 @@ async function refreshRate() {
 }
 
 els.createOrderBtn.onclick = async () => {
+  const amount = Number(els.usdtAmount.value);
+  if (!amount || amount <= 0) {
+    alert('Please enter a valid USDT amount');
+    return;
+  }
+
   try {
+    els.createOrderBtn.disabled = true;
+    els.createOrderBtn.textContent = 'Processing...';
+
     const body = {
-      usdtAmount: Number(els.usdtAmount.value),
+      usdtAmount: amount,
       bankDetails: {
         account_number: els.bankAcc.value.trim(),
         ifsc: els.bankIfsc.value.trim(),
@@ -161,9 +170,13 @@ els.createOrderBtn.onclick = async () => {
       },
     };
     const data = await api('/exchange/create-order', 'POST', body);
-    alert(`Order created: ${data.id || 'OK'}`);
+    alert(`Exchange successful! Order ID: ${data.orderId || 'OK'}`);
+    els.usdtAmount.value = '';
   } catch (e) {
-    alert(`Order error: ${e.message}`);
+    alert(`Exchange failed: ${e.message}`);
+  } finally {
+    els.createOrderBtn.disabled = false;
+    els.createOrderBtn.textContent = 'Create Order';
   }
 };
 
