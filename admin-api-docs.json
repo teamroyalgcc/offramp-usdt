@@ -1,6 +1,5 @@
 {
   "project": "Offramp-USDT Admin API",
-
   "base_url": "/api/admin",
   "endpoints": [
     {
