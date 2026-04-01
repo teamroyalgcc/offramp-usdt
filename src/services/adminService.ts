@@ -129,6 +129,79 @@ export class AdminService {
     return { success: true, admin: data };
   }
 
+  async listAdmins(requesterAdminId: string) {
+    const { data: requester } = await supabase
+      .from('admins')
+      .select('role')
+      .eq('id', requesterAdminId)
+      .single();
+    
+    if (!requester || requester.role !== 'superadmin') {
+      throw new Error('Permission denied');
+    }
+
+    const { data, error } = await supabase
+      .from('admins')
+      .select('id, username, role, created_at')
+      .neq('id', requesterAdminId)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return data;
+  }
+
+  async updateOtherAdmin(requesterAdminId: string, targetAdminId: string, updates: { username?: string, password?: string }) {
+    const { data: requester } = await supabase
+      .from('admins')
+      .select('role')
+      .eq('id', requesterAdminId)
+      .single();
+    
+    if (!requester || requester.role !== 'superadmin') {
+      throw new Error('Permission denied');
+    }
+
+    const updatePayload: any = {};
+    if (updates.username) updatePayload.username = updates.username;
+    if (updates.password) {
+      updatePayload.password_hash = await bcrypt.hash(updates.password, 10);
+    }
+
+    if (Object.keys(updatePayload).length === 0) throw new Error('No updates provided');
+
+    const { data, error } = await supabase
+      .from('admins')
+      .update(updatePayload)
+      .eq('id', targetAdminId)
+      .select('id, username, role')
+      .single();
+    
+    if (error) throw error;
+    await this.logAction(requesterAdminId, 'SUPERADMIN_UPDATE_ADMIN', 'admin', targetAdminId, { fields: Object.keys(updatePayload) });
+    return { success: true, admin: data };
+  }
+
+  async deleteAdmin(requesterAdminId: string, targetAdminId: string) {
+    const { data: requester } = await supabase
+      .from('admins')
+      .select('role')
+      .eq('id', requesterAdminId)
+      .single();
+    
+    if (!requester || requester.role !== 'superadmin') {
+      throw new Error('Permission denied');
+    }
+
+    const { error } = await supabase
+      .from('admins')
+      .delete()
+      .eq('id', targetAdminId);
+    
+    if (error) throw error;
+    await this.logAction(requesterAdminId, 'SUPERADMIN_DELETE_ADMIN', 'admin', targetAdminId);
+    return { success: true };
+  }
+
   async getDashboardData() {
     const treasuryAddress = config.treasuryAddress;
     const treasuryBalance = await tronService.getTreasuryBalance(treasuryAddress);

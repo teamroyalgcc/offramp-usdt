@@ -97,6 +97,41 @@ export class AdminController extends BaseController {
     }
   }
 
+  async listAllAdmins(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      const data = await adminService.listAdmins(req.admin.id);
+      return this.ok(res, data);
+    } catch (error: any) {
+      return this.fail(res, error.message || error);
+    }
+  }
+
+  async updateOtherAdmin(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      const id = req.params.id as string;
+      const parsed = updateAdminSchema.safeParse(req.body);
+      if (!parsed.success) return this.clientError(res, parsed.error.issues[0].message);
+
+      const result = await adminService.updateOtherAdmin(req.admin.id, id, parsed.data);
+      return this.ok(res, result);
+    } catch (error: any) {
+      return this.fail(res, error.message || error);
+    }
+  }
+
+  async deleteOtherAdmin(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      const id = req.params.id as string;
+      const result = await adminService.deleteAdmin(req.admin.id, id);
+      return this.ok(res, result);
+    } catch (error: any) {
+      return this.fail(res, error.message || error);
+    }
+  }
+
   async getDashboard(req: AdminRequest, res: Response) {
     try {
       const data = await adminService.getDashboardData();
