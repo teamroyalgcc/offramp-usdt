@@ -178,6 +178,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- 8. Add network column to deposit_addresses if missing
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='deposit_addresses' AND column_name='network') THEN
+        ALTER TABLE deposit_addresses ADD COLUMN network VARCHAR(50) DEFAULT 'tron';
+    END IF;
+END $$;
+
 -- 4. Update settle_exchange function
 CREATE OR REPLACE FUNCTION public.settle_exchange(
     p_user_id UUID,

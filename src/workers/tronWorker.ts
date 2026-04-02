@@ -4,6 +4,7 @@ import supabase from '../utils/supabase.js';
 import walletService from '../services/walletService.js';
 import { decrypt } from '../utils/crypto.js';
 import tronService from '../services/tronService.js';
+import wsService from '../services/wsService.js';
 
 const TRON_CONFIG = {
   fullNode: config.tron.fullNode,
@@ -29,8 +30,49 @@ export class TronWorker {
 
   public start() {
     console.log('[TRON_WORKER] Starting persistent deposit listener...');
-    // Poll every 10 seconds for deposits
-    this.timer = setInterval(() => this.checkDeposits(), 10000);
+    // 1. Regular Polling as fallback (every 15s)
+    this.timer = setInterval(() => this.checkDeposits(), 15000);
+
+    // 2. Real-time Event Listening (if event server is available)
+    this.listenToEvents();
+  }
+
+  private async listenToEvents() {
+    try {
+      console.log(`[TRON_WORKER] Subscribing to USDT Transfer events for contract: ${config.tron.usdtContract}`);
+      
+      // Listen to Transfer events on the USDT contract
+      // Note: This requires a TRON node with event server enabled
+      tronWeb.contract().at(config.tron.usdtContract).then((contract: any) => {
+        contract.Transfer().watch(async (err: any, event: any) => {
+          if (err) {
+            console.error('[TRON_WORKER] Event listener error:', err);
+            return;
+          }
+
+          if (event && event.result) {
+            const { to, value } = event.result;
+            const toAddress = tronWeb.address.fromHex(to);
+            const amount = Number(value) / 1000000;
+
+            // Check if this 'to' address is one of our active deposit addresses
+            const { data: addr, error } = await supabase
+              .from('deposit_addresses')
+              .select('*')
+              .eq('tron_address', toAddress)
+              .eq('is_used', false)
+              .maybeSingle();
+
+            if (addr) {
+              console.log(`[TRON_WORKER] Real-time Transfer detected: ${amount} USDT to ${toAddress}`);
+              await this.processAddress(addr);
+            }
+          }
+        });
+      });
+    } catch (err) {
+      console.error('[TRON_WORKER] Failed to start event listener:', err);
+    }
   }
 
   public stop() {
@@ -46,6 +88,7 @@ export class TronWorker {
 
     try {
       // Find active deposit addresses that haven't been swept yet
+      // We also check for addresses that have recently expired but may have received funds
       const { data: addresses, error } = await supabase
         .from('deposit_addresses')
         .select('*')
@@ -55,6 +98,11 @@ export class TronWorker {
       if (!addresses || addresses.length === 0) return;
 
       for (const addr of addresses) {
+        // Late deposit handling: check if address is expired but still has balance
+        const isExpired = new Date(addr.expires_at) < new Date();
+        if (isExpired) {
+          console.log(`[TRON_WORKER] Checking expired address ${addr.tron_address} for late deposit...`);
+        }
         await this.processAddress(addr);
       }
     } catch (err) {
@@ -132,6 +180,13 @@ export class TronWorker {
           .eq('id', addr.id);
           
         console.log(`[TRON_WORKER] Successfully credited ${balanceUSDT} USDT to user ${addr.user_id}`);
+
+        // Real-time notification to user
+        wsService.sendToUser(addr.user_id, 'DEPOSIT_CREDITED', {
+          amount: balanceUSDT,
+          txHash,
+          tronAddress: addr.tron_address
+        });
 
         // Trigger Automatic Sweep to Treasury
         this.triggerSweep(addr, balanceUSDT, txHash).catch(err => {

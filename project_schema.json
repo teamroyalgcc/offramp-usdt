@@ -1,0 +1,50 @@
+{
+  "project": "Offramp USDT Backend",
+  "version": "1.0.0",
+  "database_schema": [
+    {
+      "table_name": "users",
+      "ddl": "CREATE TABLE users (id uuid, email character varying, full_name character varying, phone_number character varying, kyc_status character varying, is_admin boolean, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "kyc_documents",
+      "ddl": "CREATE TABLE kyc_documents (id uuid, user_id uuid, document_type character varying, document_url text, status character varying, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "ledger_accounts",
+      "ddl": "CREATE TABLE ledger_accounts (user_id uuid, available_balance numeric, locked_balance numeric, settled_balance numeric, updated_at timestamp with time zone);"
+    },
+    {
+      "table_name": "ledger_entries",
+      "ddl": "CREATE TABLE ledger_entries (id uuid, user_id uuid, type character varying, amount numeric, balance_type character varying, direction character varying, reference_id text, description text, balance_before numeric, balance_after numeric, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "deposit_addresses",
+      "ddl": "CREATE TABLE deposit_addresses (id uuid, user_id uuid, tron_address character varying, network character varying, private_key_encrypted text, is_used boolean, last_balance numeric, expires_at timestamp with time zone, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "blockchain_transactions",
+      "ddl": "CREATE TABLE blockchain_transactions (id uuid, tx_hash character varying, network character varying, from_address character varying, to_address character varying, amount numeric, status character varying, sweep_tx_hash character varying, swept_at timestamp with time zone, processed_at timestamp with time zone, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "bank_accounts",
+      "ddl": "CREATE TABLE bank_accounts (id uuid, user_id uuid, account_number character varying, ifsc_code character varying, account_holder_name character varying, is_active boolean, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "exchange_orders",
+      "ddl": "CREATE TABLE exchange_orders (id uuid, user_id uuid, usdt_amount numeric, exchange_rate numeric, fiat_amount numeric, status character varying, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "payout_orders",
+      "ddl": "CREATE TABLE payout_orders (id uuid, user_id uuid, amount numeric, bank_account_id uuid, status character varying, gateway_ref_id character varying, failure_reason text, created_at timestamp with time zone, updated_at timestamp with time zone);"
+    },
+    {
+      "table_name": "wallets",
+      "ddl": "CREATE TABLE wallets (id uuid, type character varying, address character varying, private_key_encrypted text, is_active boolean, created_at timestamp with time zone);"
+    },
+    {
+      "table_name": "audit_logs",
+      "ddl": "CREATE TABLE audit_logs (id uuid, user_id uuid, action character varying, entity_type character varying, entity_id uuid, old_values jsonb, new_values jsonb, ip_address character varying, user_agent text, created_at timestamp with time zone);"
+    }
+  ]
+}
