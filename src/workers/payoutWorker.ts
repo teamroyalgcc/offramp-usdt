@@ -1,5 +1,6 @@
 import supabase from '../utils/supabase.js';
 import { PayoutProvider } from '../services/payoutProvider.js';
+import wsService from '../services/wsService.js';
 
 export class PayoutWorker {
   private static instance: PayoutWorker;
@@ -67,6 +68,12 @@ export class PayoutWorker {
               })
               .eq('id', order.id);
             console.log(`[PAYOUT_WORKER] Payout order ${order.id} completed successfully`);
+
+            wsService.sendToUser(order.user_id, 'PAYOUT_COMPLETED', {
+              orderId: order.id,
+              amount: order.amount,
+              utr: (result as any).utr || result.payout_id
+            });
           } else if (result.status === 'FAILED') {
             await supabase
               .from('payout_orders')
@@ -77,6 +84,11 @@ export class PayoutWorker {
               })
               .eq('id', order.id);
             console.error(`[PAYOUT_WORKER] Payout order ${order.id} failed: ${result.reason}`);
+
+            wsService.sendToUser(order.user_id, 'PAYOUT_FAILED', {
+              orderId: order.id,
+              reason: result.reason
+            });
           }
         } catch (innerErr: any) {
           console.error(`[PAYOUT_WORKER] Inner error for order ${order.id}:`, innerErr.message);

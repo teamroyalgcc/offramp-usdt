@@ -24,11 +24,13 @@ export class WithdrawalService {
         throw new Error('Withdrawal amount too low after fees');
       }
 
+      const withdrawalId = uuidv4();
+      
       // 1. Lock funds using RPC (Atomic operation)
       const { data: lockResult, error: lockError } = await supabase.rpc('lock_funds', {
         p_user_id: userId,
         p_amount: data.usdt_amount,
-        p_ref_id: uuidv4(),
+        p_ref_id: withdrawalId,
         p_description: `USDT Withdrawal to ${data.destination_address}`
       });
 
@@ -39,12 +41,14 @@ export class WithdrawalService {
       const { data: withdrawal, error: createError } = await supabase
         .from('usdt_withdrawals')
         .insert({
+          id: withdrawalId,
           user_id: userId,
           destination_address: data.destination_address,
           usdt_amount: data.usdt_amount,
           fee: fee,
           net_amount: netAmount,
-          status: 'pending'
+          status: 'pending',
+          idempotency_key: `WD_${userId}_${Date.now()}` // for client retries
         })
         .select()
         .single();

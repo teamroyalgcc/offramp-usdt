@@ -1,4 +1,7 @@
 import express from 'express';
+import { createServer } from 'http';
+import wsService from './services/wsService.js';
+import bscService from './services/bscService.js';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
@@ -22,6 +25,10 @@ import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
 
 const app = express();
+const server = createServer(app);
+
+// Initialize WebSocket Service
+wsService.init(server);
 
 // Multer setup for KYC documents
 const upload = multer({
@@ -208,13 +215,14 @@ const startServer = async () => {
     // 1. Start Persistent Workers (Start by default unless explicitly disabled)
     if (process.env.SKIP_WORKERS !== 'true') {
       tronWorker.start();
+      bscService.startListening();
       payoutWorker.start();
       withdrawalWorker.start();
       console.log('✅ Background workers started');
     }
 
     // 2. Start Express Server
-    app.listen(config.port, () => {
+    server.listen(config.port, () => {
       console.log(`🚀 Server running on port ${config.port} in ${config.nodeEnv} mode`);
     });
   } catch (error) {

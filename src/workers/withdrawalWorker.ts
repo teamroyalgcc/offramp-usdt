@@ -1,5 +1,6 @@
 import supabase from '../utils/supabase.js';
 import tronService from '../services/tronService.js';
+import wsService from '../services/wsService.js';
 
 export class WithdrawalWorker {
   private static instance: WithdrawalWorker;
@@ -108,6 +109,12 @@ export class WithdrawalWorker {
           .update({ status: 'completed', updated_at: new Date().toISOString() })
           .eq('id', withdrawal.id);
         console.log(`[WITHDRAWAL_WORKER] Withdrawal ${withdrawal.id} confirmed`);
+
+        wsService.sendToUser(withdrawal.user_id, 'WITHDRAWAL_COMPLETED', {
+          withdrawalId: withdrawal.id,
+          amount: withdrawal.usdt_amount,
+          txHash: withdrawal.tx_hash
+        });
       } else if (status === 'failed') {
         await supabase
           .from('usdt_withdrawals')
@@ -118,6 +125,11 @@ export class WithdrawalWorker {
           })
           .eq('id', withdrawal.id);
         console.error(`[WITHDRAWAL_WORKER] Withdrawal ${withdrawal.id} failed on chain`);
+
+        wsService.sendToUser(withdrawal.user_id, 'WITHDRAWAL_FAILED', {
+          withdrawalId: withdrawal.id,
+          reason: 'Blockchain transaction failed'
+        });
       }
     } catch (error: any) {
       console.error(`[WITHDRAWAL_WORKER] Confirmation check failed for ${withdrawal.id}:`, error.message);
