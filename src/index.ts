@@ -250,8 +250,8 @@ const startServer = async () => {
 
     // 1. Start Persistent Workers (Start by default unless explicitly disabled)
     if (process.env.SKIP_WORKERS !== 'true') {
-      tronWorker.start();
-      bscService.startListening();
+      await tronWorker.start();
+      await bscService.startListening();
       payoutWorker.start();
       withdrawalWorker.start();
       console.log('✅ Background workers started');

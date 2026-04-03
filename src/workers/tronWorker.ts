@@ -49,8 +49,13 @@ export class TronWorker {
   private static instance: TronWorker;
   private isProcessing: boolean = false;
   private timer: NodeJS.Timeout | null = null;
+  private activeAddresses: Set<string> = new Set();
 
-  private constructor() {}
+  private constructor() {
+    this.refreshCache();
+    // Refresh cache every 2 minutes
+    setInterval(() => this.refreshCache(), 120000);
+  }
 
   public static getInstance(): TronWorker {
     if (!TronWorker.instance) {
@@ -59,8 +64,12 @@ export class TronWorker {
     return TronWorker.instance;
   }
 
-  public start() {
+  public async start() {
     console.log('[TRON_WORKER] Starting persistent deposit listener...');
+    
+    // Ensure cache is populated before starting
+    await this.refreshCache();
+
     // 1. Regular Polling as fallback (every 15s)
     this.timer = setInterval(() => this.checkDeposits(), 15000);
 
@@ -74,15 +83,22 @@ export class TronWorker {
       
       // 1. WebSocket / Watcher (Real-time)
       const contract = await tronWeb.contract(USDT_ABI, config.tron.usdtContract);
-      contract.Transfer().watch(async (err: any, event: any) => {
-        if (err) {
-          console.error('[TRON_WORKER] Event listener error:', err);
-          return;
-        }
-        if (event && event.result) {
-          await this.handleEvent(event.result, event.transaction_id);
-        }
-      });
+      // Try events.Transfer().watch() which is common in newer TronWeb v6
+      const eventEmitter = (contract as any).events?.Transfer() || contract.Transfer();
+      
+      if (eventEmitter && typeof eventEmitter.watch === 'function') {
+        eventEmitter.watch(async (err: any, event: any) => {
+          if (err) {
+            console.error('[TRON_WORKER] Event listener error:', err);
+            return;
+          }
+          if (event && event.result) {
+            await this.handleEvent(event.result, event.transaction_id);
+          }
+        });
+      } else {
+        console.warn('[TRON_WORKER] Warning: contract.Transfer().watch not found, falling back to polling ONLY.');
+      }
 
       // 2. Event Polling (Fallback for reliability)
       setInterval(() => this.pollEvents(), 60000); // Increase to 60s for better rate limit handling
@@ -100,7 +116,11 @@ export class TronWorker {
       
       if (json.success && json.data) {
         for (const event of json.data) {
-          await this.handleEvent(event.result, event.transaction_id);
+          const { to } = event.result;
+          const toAddress = to.startsWith('41') ? tronWeb.address.fromHex(to) : to;
+          if (this.activeAddresses.has(toAddress)) {
+            await this.handleEvent(event.result, event.transaction_id);
+          }
         }
       }
     } catch (err) {
@@ -108,11 +128,47 @@ export class TronWorker {
     }
   }
 
+  private async refreshCache() {
+    try {
+      // Find unused addresses. We use a simpler select first to avoid column-not-found errors if schema is out of sync
+      const { data, error } = await supabase
+        .from('deposit_addresses')
+        .select('*')
+        .eq('is_used', false);
+
+      if (error) throw error;
+
+      const newAddresses = new Set<string>();
+      if (data) {
+        data.forEach((addr: any) => {
+          // If we have a network column, and it's bsc, don't include it in Tron worker
+          if (addr.network && addr.network === 'bsc') return;
+          
+          if (addr.tron_address) {
+            newAddresses.add(addr.tron_address);
+          }
+        });
+      }
+      
+      this.activeAddresses = newAddresses;
+      console.log(`[TRON_WORKER] Cache refreshed: ${this.activeAddresses.size} active Tron addresses`);
+    } catch (err) {
+      console.error('[TRON_WORKER] Failed to refresh address cache:', err);
+    }
+  }
+
+  public addActiveAddress(address: string) {
+    this.activeAddresses.add(address);
+  }
+
   private async handleEvent(result: any, txHash: string) {
     const { to, value } = result;
     // Handle both hex and base58 formats
     const toAddress = to.startsWith('41') ? tronWeb.address.fromHex(to) : to;
     const amount = Number(value) / 1000000;
+
+    // Filter in memory first
+    if (!this.activeAddresses.has(toAddress)) return;
 
     const { data: addr, error } = await supabase
       .from('deposit_addresses')
@@ -124,6 +180,8 @@ export class TronWorker {
     if (addr) {
       console.log(`[TRON_WORKER] Event-based Transfer detected: ${amount} USDT to ${toAddress}`);
       await this.processAddress(addr);
+      // Remove from cache once processed (it will stay processed in DB)
+      this.activeAddresses.delete(toAddress);
     }
   }
 

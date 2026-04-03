@@ -26,10 +26,11 @@ const customFetch = async (input: string | URL | Request, init?: RequestInit) =>
       }
       
       return response;
-    } catch (err) {
+    } catch (err: any) {
       lastError = err;
       retries--;
-      console.warn(`[SUPABASE_FETCH] Network error. Retrying... (${retries} left)`, err);
+      const targetUrl = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url);
+      console.warn(`[SUPABASE_FETCH] Network error for ${targetUrl}. Retrying... (${retries} left)`, err.message || err);
       await new Promise(res => setTimeout(res, 2000));
     }
   }

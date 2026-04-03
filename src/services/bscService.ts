@@ -17,10 +17,15 @@ export class BSCService {
   private static instance: BSCService;
   private provider: ethers.JsonRpcProvider;
   private contract: ethers.Contract;
+  private activeAddresses: Set<string> = new Set();
+  private lastCacheRefresh: number = 0;
 
   private constructor() {
     this.provider = new ethers.JsonRpcProvider(BSC_RPC);
     this.contract = new ethers.Contract(BSC_USDT_CONTRACT, USDT_ABI, this.provider);
+    this.refreshCache();
+    // Refresh cache every 2 minutes
+    setInterval(() => this.refreshCache(), 120000);
   }
 
   public static getInstance(): BSCService {
@@ -33,12 +38,49 @@ export class BSCService {
   public async startListening() {
     console.log('[BSC_SERVICE] Starting BSC USDT listener...');
     
+    // Ensure cache is populated before starting
+    await this.refreshCache();
+
     // Polling interval increased to 60s to avoid rate limits
     setInterval(() => this.pollEvents(), 60000);
     
     this.contract.on("Transfer", async (from, to, value, event) => {
-      await this.handleTransfer(from, to, value, event.transactionHash);
+      // QUICK FILTER: Only proceed if 'to' is one of our active addresses
+      if (this.activeAddresses.has(to.toLowerCase())) {
+        await this.handleTransfer(from, to, value, event.transactionHash);
+      }
     });
+  }
+
+  private async refreshCache() {
+    try {
+      const { data, error } = await supabase
+        .from('deposit_addresses')
+        .select('tron_address')
+        .eq('network', 'bsc')
+        .eq('is_used', false);
+
+      if (error) throw error;
+
+      const newAddresses = new Set<string>();
+      if (data) {
+        data.forEach(addr => {
+          if (addr.tron_address) {
+            newAddresses.add(addr.tron_address.toLowerCase());
+          }
+        });
+      }
+      
+      this.activeAddresses = newAddresses;
+      this.lastCacheRefresh = Date.now();
+      console.log(`[BSC_SERVICE] Cache refreshed: ${this.activeAddresses.size} active BSC addresses`);
+    } catch (err) {
+      console.error('[BSC_SERVICE] Failed to refresh address cache:', err);
+    }
+  }
+
+  public addActiveAddress(address: string) {
+    this.activeAddresses.add(address.toLowerCase());
   }
 
   private async pollEvents() {
@@ -49,7 +91,10 @@ export class BSCService {
       for (const event of events) {
         if ('args' in event && event.args) {
           const [from, to, value] = event.args;
-          await this.handleTransfer(from, to, value, event.transactionHash);
+          // Filter in memory first
+          if (this.activeAddresses.has(to.toLowerCase())) {
+            await this.handleTransfer(from, to, value, event.transactionHash);
+          }
         }
       }
     } catch (err: any) {
