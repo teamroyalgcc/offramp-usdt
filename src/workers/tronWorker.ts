@@ -70,25 +70,31 @@ export class TronWorker {
 
   private async listenToEvents() {
     try {
-      console.log(`[TRON_WORKER] Subscribing to USDT Transfer events for contract: ${config.tron.usdtContract}`);
+      const contractAddr = config.tron.usdtContract;
+      console.log(`[TRON_WORKER] Subscribing to USDT Transfer events for contract: ${contractAddr}`);
       
-      // 1. WebSocket / Watcher (Real-time)
-      const contract = await tronWeb.contract(USDT_ABI, config.tron.usdtContract);
-      contract.Transfer().watch(async (err: any, event: any) => {
-        if (err) {
-          console.error('[TRON_WORKER] Event listener error:', err);
-          return;
+      // TronWeb 6.x Event API usage
+      // Basic validation to avoid crashes if contract address is just a wallet
+      if (contractAddr.startsWith('T') && contractAddr.length === 34) {
+        try {
+          const contract = await tronWeb.contract(USDT_ABI, contractAddr);
+          
+          // In TronWeb 6.x, we use the Event API or polling for stability
+          // Legacy .watch() is removed in many environments. 
+          // We'll use our handleEvent logic via Polling for maximum reliability
+          console.log(`[TRON_WORKER] Event listener initialized for ${contractAddr}. Polling active.`);
+        } catch (contractErr: any) {
+          console.error(`[TRON_WORKER] Contract ABI error for ${contractAddr}:`, contractErr.message);
         }
-        if (event && event.result) {
-          await this.handleEvent(event.result, event.transaction_id);
-        }
-      });
+      } else {
+        console.error(`[TRON_WORKER] Invalid USDT contract address in config: ${contractAddr}`);
+      }
 
-      // 2. Event Polling (Fallback for reliability)
-      setInterval(() => this.pollEvents(), 60000); // Increase to 60s for better rate limit handling
+      // Fallback Polling (Primary in 6.x for reliability)
+      setInterval(() => this.pollEvents(), 30000);
 
-    } catch (err) {
-      console.error('[TRON_WORKER] Failed to start event listener:', err);
+    } catch (err: any) {
+      console.error('[TRON_WORKER] Failed to start event listener:', err.message);
     }
   }
 
