@@ -378,14 +378,16 @@ export class AdminService {
 
   async updateSystemSpread(spreadPercent: number, adminId: string) {
     const { error } = await supabase
-      .from('system_configs')
-      .upsert({ 
-        key: 'usdt_spread_percent', 
-        value: spreadPercent.toString(),
-        updated_at: new Date().toISOString()
-      });
+      .from('system_settings')
+      .update({ exchange_spread_percent: spreadPercent })
+      .eq('id', 1);
+
     if (error) throw error;
-    await this.logAction(adminId, 'UPDATE_SPREAD', 'system_config', 'usdt_spread_percent', { spreadPercent });
+    
+    // Also update local cache
+    await configService.loadConfig();
+
+    await this.logAction(adminId, 'UPDATE_SPREAD', 'system_settings', 'exchange_spread_percent', { spreadPercent });
     return { success: true };
   }
 

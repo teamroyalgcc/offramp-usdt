@@ -14,7 +14,7 @@ const updateStatusSchema = z.object({
 });
 
 const updateRateSchema = z.object({
-  spreadPercent: z.number().min(0).max(100),
+  spreadPercent: z.number().min(-100).max(100),
 });
 
 const manualCreditSchema = z.object({
