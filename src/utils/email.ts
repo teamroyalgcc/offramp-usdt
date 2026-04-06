@@ -4,22 +4,26 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: Number(process.env.SMTP_PORT) || 587,
   secure: process.env.SMTP_SECURE === 'true',
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  // CRITICAL FIX: Force IPv4 to prevent ENETUNREACH resolution to IPv6
+  family: 4, 
   // Optimized for production platforms like Render
   pool: true,
   maxConnections: 3,
   maxMessages: 100,
+  connectionTimeout: 10000, 
+  greetingTimeout: 5000,    
   tls: {
-    // Forces IPv4 resolution for Gmail servers on some providers
-    rejectUnauthorized: false
+    rejectUnauthorized: false,
+    minVersion: 'TLSv1.2'
   }
-});
+} as any);
 
 /**
  * Sends a 6-digit numeric OTP to the user for authentication.
