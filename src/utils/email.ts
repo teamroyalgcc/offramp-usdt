@@ -6,23 +6,29 @@ dotenv.config();
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === 'true',
+  secure: process.env.SMTP_SECURE === 'true', // true for 465, false for others
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
   // CRITICAL FIX: Force IPv4 to prevent ENETUNREACH resolution to IPv6
+  // Many production environments (like Render/DigitalOcean) have flaky IPv6 SMTP routing
   family: 4, 
-  // Optimized for production platforms like Render
+  // Production resiliency settings
   pool: true,
-  maxConnections: 3,
+  maxConnections: 5,
   maxMessages: 100,
-  connectionTimeout: 10000, 
-  greetingTimeout: 5000,    
+  connectionTimeout: 30000, // Increased to 30s for slower production networks
+  greetingTimeout: 15000,   // Increased to 15s
+  socketTimeout: 30000,     // Added socket timeout
+  dnsTimeout: 10000,        // Added DNS timeout
   tls: {
+    // Do not fail on invalid certs in production if using standard SMTP
     rejectUnauthorized: false,
     minVersion: 'TLSv1.2'
-  }
+  },
+  debug: process.env.NODE_ENV !== 'production', // Enable debug logs in non-prod
+  logger: false
 } as any);
 
 /**

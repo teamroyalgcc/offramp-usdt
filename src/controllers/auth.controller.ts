@@ -149,7 +149,13 @@ export class AuthController {
       try {
         await sendOTPEmail(normalizedEmail, otp);
       } catch (mailError: any) {
-        console.error('Mail Service Failure:', mailError.message);
+        console.error('[EMAIL_SERVICE_FAILURE] Detailed Log:', {
+          message: mailError.message,
+          code: mailError.code,
+          command: mailError.command,
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: process.env.SMTP_PORT || '587'
+        });
         return res.status(503).json({ error: 'Email delivery service temporarily unavailable. Please try again later.' });
       }
 
