@@ -77,6 +77,8 @@ export class PayoutWorker {
               amount: order.amount,
               utr: (result as any).utr || result.payout_id
             });
+
+            wsService.pushDashboardUpdate(order.user_id);
           } else if (result.status === 'FAILED') {
             await supabase
               .from('payout_orders')

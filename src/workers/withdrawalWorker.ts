@@ -137,6 +137,8 @@ export class WithdrawalWorker {
           amount: withdrawal.usdt_amount,
           txHash: withdrawal.tx_hash
         });
+
+        wsService.pushDashboardUpdate(withdrawal.user_id);
       } else if (status === 'failed') {
         await supabase
           .from('usdt_withdrawals')
