@@ -16,20 +16,20 @@ DECLARE
     v_balance_after DECIMAL;
     v_existing_id UUID;
 BEGIN
-    -- Check for duplicate
-    SELECT id INTO v_existing_id FROM ledger_entries 
+    -- 1. Check for duplicate tx_hash to prevent double crediting
+    SELECT id INTO v_existing_id FROM public.ledger_entries 
     WHERE reference_id = p_tx_hash AND type = 'deposit' LIMIT 1;
     
     IF v_existing_id IS NOT NULL THEN
         RETURN jsonb_build_object('success', false, 'message', 'Duplicate transaction');
     END IF;
 
-    -- Ensure account exists
+    -- 2. Ensure account exists
     INSERT INTO public.ledger_accounts (user_id, available_balance, locked_balance, settled_balance)
     VALUES (p_user_id, 0, 0, 0)
     ON CONFLICT (user_id) DO NOTHING;
 
-    -- Lock row and get current balance
+    -- 3. Lock row and get current balance (Source of Truth)
     SELECT available_balance INTO v_balance_before 
     FROM public.ledger_accounts WHERE user_id = p_user_id FOR UPDATE;
 
@@ -39,16 +39,16 @@ BEGIN
 
     v_balance_after := v_balance_before + p_amount;
 
-    -- Insert Entry
-    INSERT INTO ledger_entries (
+    -- 4. Insert Entry with audit trail
+    INSERT INTO public.ledger_entries (
         user_id, type, amount, balance_type, direction, reference_id, description, balance_before, balance_after
     ) VALUES (
         p_user_id, 'deposit', p_amount, 'available', 'credit', p_tx_hash, p_description, v_balance_before, v_balance_after
     );
 
-    -- Update Account
-    UPDATE ledger_accounts 
-    SET available_balance = v_balance_after 
+    -- 5. Update Account balance
+    UPDATE public.ledger_accounts 
+    SET available_balance = v_balance_after, updated_at = NOW()
     WHERE user_id = p_user_id;
 
     RETURN jsonb_build_object('success', true, 'new_balance', v_balance_after);
@@ -68,34 +68,35 @@ DECLARE
     v_locked_before DECIMAL;
     v_locked_after DECIMAL;
 BEGIN
-    -- Lock row
+    -- 1. Lock row for atomic update
     SELECT available_balance, locked_balance INTO v_avail_before, v_locked_before
-    FROM ledger_accounts WHERE user_id = p_user_id FOR UPDATE;
+    FROM public.ledger_accounts WHERE user_id = p_user_id FOR UPDATE;
 
+    -- 2. Insufficient funds check
     IF v_avail_before < p_amount THEN
-        RAISE EXCEPTION 'Insufficient available balance';
+        RETURN jsonb_build_object('success', false, 'message', 'Insufficient available balance');
     END IF;
 
     v_avail_after := v_avail_before - p_amount;
     v_locked_after := v_locked_before + p_amount;
 
-    -- Debit Available
-    INSERT INTO ledger_entries (
+    -- 3. Debit Available
+    INSERT INTO public.ledger_entries (
         user_id, type, amount, balance_type, direction, reference_id, description, balance_before, balance_after
     ) VALUES (
         p_user_id, 'withdrawal_lock', p_amount, 'available', 'debit', p_ref_id, p_description, v_avail_before, v_avail_after
     );
 
-    -- Credit Locked
-    INSERT INTO ledger_entries (
+    -- 4. Credit Locked
+    INSERT INTO public.ledger_entries (
         user_id, type, amount, balance_type, direction, reference_id, description, balance_before, balance_after
     ) VALUES (
         p_user_id, 'withdrawal_lock', p_amount, 'locked', 'credit', p_ref_id, p_description, v_locked_before, v_locked_after
     );
 
-    -- Update Account
-    UPDATE ledger_accounts 
-    SET available_balance = v_avail_after, locked_balance = v_locked_after
+    -- 5. Update Account
+    UPDATE public.ledger_accounts 
+    SET available_balance = v_avail_after, locked_balance = v_locked_after, updated_at = NOW()
     WHERE user_id = p_user_id;
 
     RETURN jsonb_build_object('success', true);

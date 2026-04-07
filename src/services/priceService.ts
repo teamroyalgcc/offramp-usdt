@@ -6,10 +6,12 @@ import config from '../config/index.js';
 class PriceService {
   private cache: NodeCache;
   private readonly CACHE_KEY = 'USDT_INR_PRICE';
-  private readonly TTL = 10; // 10 seconds cache
+  private readonly TTL = 5; // 5 seconds cache for real-time accuracy
 
   constructor() {
     this.cache = new NodeCache({ stdTTL: this.TTL });
+    // Aggressive background refresh
+    setInterval(() => this.getUSDTPrice(), 5000);
   }
 
   public async getUSDTPrice(): Promise<number> {

@@ -186,24 +186,43 @@ export class TronWorker {
     this.isProcessing = true;
 
     try {
-      // Find active deposit addresses that haven't been swept yet
-      // We also check for addresses that have recently expired but may have received funds
+      // 1. Find active deposit addresses that haven't been swept yet
       const { data: addresses, error } = await supabase
         .from('deposit_addresses')
-        .select('*')
+        .select('id, user_id, tron_address, expires_at, private_key_encrypted')
         .eq('is_used', false);
       
       if (error) throw error;
-      if (!addresses || addresses.length === 0) return;
-
-      for (const addr of addresses) {
-        // Late deposit handling: check if address is expired but still has balance
-        const isExpired = new Date(addr.expires_at) < new Date();
-        if (isExpired) {
-          console.log(`[TRON_WORKER] Checking expired address ${addr.tron_address} for late deposit...`);
+      if (addresses) {
+        for (const addr of addresses) {
+          await this.processAddress(addr);
         }
-        await this.processAddress(addr);
       }
+
+      // 2. Retry failed sweeps (where address was marked used but funds are still there)
+      const { data: sweepPending, error: sweepErr } = await supabase
+        .from('blockchain_transactions')
+        .select('*')
+        .eq('status', 'credited')
+        .is('sweep_tx_hash', null)
+        .limit(10);
+
+      if (sweepErr) throw sweepErr;
+      if (sweepPending) {
+        for (const tx of sweepPending) {
+          const { data: addr } = await supabase
+            .from('deposit_addresses')
+            .select('*')
+            .eq('tron_address', tx.to_address)
+            .single();
+          
+          if (addr) {
+            console.log(`[TRON_WORKER] Retrying sweep for ${tx.to_address}`);
+            await this.triggerSweep(addr, tx.amount, tx.tx_hash);
+          }
+        }
+      }
+
     } catch (err) {
       console.error('[TRON_WORKER] Error checking deposits:', err);
     } finally {
@@ -286,6 +305,9 @@ export class TronWorker {
           txHash,
           tronAddress: addr.tron_address
         });
+
+        // Push full dashboard update
+        wsService.pushDashboardUpdate(addr.user_id);
 
         // Trigger Automatic Sweep to Treasury
         this.triggerSweep(addr, balanceUSDT, txHash).catch(err => {

@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Server } from 'http';
 import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
+import supabase from '../utils/supabase.js';
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -74,12 +75,41 @@ export class WSService {
   public sendToUser(userId: string, type: string, payload: any) {
     const userClients = this.clients.get(userId);
     if (userClients) {
-      const message = JSON.stringify({ type, payload, timestamp: new Date().toISOString() });
+      // Include system-wide state if needed
+      const message = JSON.stringify({ 
+        type, 
+        payload, 
+        timestamp: new Date().toISOString() 
+      });
       userClients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message);
         }
       });
+    }
+  }
+
+  public async pushDashboardUpdate(userId: string) {
+    try {
+      const { data: balance } = await supabase
+        .from('ledger_accounts')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+      
+      const { data: recentHistory } = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      this.sendToUser(userId, 'DASHBOARD_UPDATE', {
+        balance,
+        recentHistory
+      });
+    } catch (err) {
+      console.error('[WS] Failed to push dashboard update:', err);
     }
   }
 
