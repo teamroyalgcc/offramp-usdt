@@ -9,8 +9,12 @@ export interface AuthRequest extends Request {
 }
 
 export const authenticate = (req: AuthRequest, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
+  let token = req.headers.authorization?.split(' ')[1];
+
+  // Also check query param for SSE (EventSource doesn't support headers)
+  if (!token && req.query.token) {
+    token = req.query.token as string;
+  }
 
   if (!token) {
     return res.status(401).json({ message: 'No token provided' });

@@ -14,7 +14,7 @@ import tronWorker from './workers/tronWorker.js';
 import payoutWorker from './workers/payoutWorker.js';
 import withdrawalWorker from './workers/withdrawalWorker.js';
 import configService from './services/configService.js';
-import { authenticate } from './middleware/authMiddleware.js';
+import { authenticate, AuthRequest } from './middleware/authMiddleware.js';
 import { adminAuth } from './middleware/adminAuth.js';
 import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
@@ -48,6 +48,7 @@ apiRouter.use('/auth', authRouter);
 // Wallet Routes
 const walletRouter = express.Router();
 walletRouter.get('/balance', authenticate, walletController.getBalance.bind(walletController));
+walletRouter.get('/transactions', authenticate, walletController.getTransactions.bind(walletController));
 walletRouter.post('/generate-address', authenticate, walletController.generateAddress.bind(walletController));
 
 apiRouter.use('/wallet', walletRouter);
@@ -111,7 +112,7 @@ app.use(express.static(path.resolve(__dirname, '../public')));
 // Real-time streams (SSE)
 const streamRouter = express.Router();
 
-streamRouter.get('/balance', authenticate, async (req: any, res) => {
+streamRouter.get('/balance', authenticate, async (req: AuthRequest, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -121,6 +122,16 @@ streamRouter.get('/balance', authenticate, async (req: any, res) => {
   if (!userId) {
     res.write(`event: error\ndata: ${JSON.stringify({ message: 'Unauthorized' })}\n\n`);
     return res.end();
+  }
+
+  console.log(`[SSE] Balance stream started for user: ${userId}`);
+
+  // Send initial balance immediately
+  try {
+    const initialBalance = await walletService.getBalance(userId);
+    res.write(`event: balance\ndata: ${JSON.stringify(initialBalance)}\n\n`);
+  } catch (e) {
+    console.error(`[SSE] Initial balance fetch failed:`, e);
   }
 
   let closed = false;
@@ -130,17 +141,19 @@ streamRouter.get('/balance', authenticate, async (req: any, res) => {
       const balance = await walletService.getBalance(userId);
       res.write(`event: balance\ndata: ${JSON.stringify(balance)}\n\n`);
     } catch (e: any) {
+      console.error(`[SSE] Balance update failed:`, e.message);
       res.write(`event: error\ndata: ${JSON.stringify({ message: e.message })}\n\n`);
     }
   }, 5000);
 
   req.on('close', () => {
+    console.log(`[SSE] Balance stream closed for user: ${userId}`);
     closed = true;
     clearInterval(interval);
   });
 });
 
-streamRouter.get('/orders', authenticate, async (req: any, res) => {
+streamRouter.get('/orders', authenticate, async (req: AuthRequest, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -152,6 +165,16 @@ streamRouter.get('/orders', authenticate, async (req: any, res) => {
     return res.end();
   }
 
+  console.log(`[SSE] Orders stream started for user: ${userId}`);
+
+  // Send initial orders immediately
+  try {
+    const initialOrders = await exchangeService.getOrders(userId);
+    res.write(`event: orders\ndata: ${JSON.stringify(initialOrders)}\n\n`);
+  } catch (e) {
+    console.error(`[SSE] Initial orders fetch failed:`, e);
+  }
+
   let closed = false;
   const interval = setInterval(async () => {
     if (closed) return;
@@ -159,11 +182,13 @@ streamRouter.get('/orders', authenticate, async (req: any, res) => {
       const orders = await exchangeService.getOrders(userId);
       res.write(`event: orders\ndata: ${JSON.stringify(orders)}\n\n`);
     } catch (e: any) {
+      console.error(`[SSE] Orders update failed:`, e.message);
       res.write(`event: error\ndata: ${JSON.stringify({ message: e.message })}\n\n`);
     }
   }, 5000);
 
   req.on('close', () => {
+    console.log(`[SSE] Orders stream closed for user: ${userId}`);
     closed = true;
     clearInterval(interval);
   });
@@ -179,7 +204,7 @@ const startServer = async () => {
     console.log('✅ Configuration loaded from database');
 
     // 1. Start Persistent Workers (Only if not in serverless environment)
-    if (process.env.RUN_WORKERS === 'true' || config.nodeEnv === 'production') {
+    if (process.env.RUN_WORKERS === 'true' || config.nodeEnv === 'production' || config.nodeEnv === 'development') {
       tronWorker.start();
       payoutWorker.start();
       withdrawalWorker.start();

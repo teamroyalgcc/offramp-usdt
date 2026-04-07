@@ -25,6 +25,17 @@ export class WalletController extends BaseController {
       return this.fail(res, error);
     }
   }
+
+  async getTransactions(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) return this.unauthorized(res);
+
+      const txs = await walletService.getTransactions(req.user.id);
+      return this.ok(res, txs);
+    } catch (error: any) {
+      return this.fail(res, error);
+    }
+  }
 }
 
 export default new WalletController();

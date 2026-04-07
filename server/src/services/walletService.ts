@@ -94,6 +94,22 @@ export class WalletService {
     return data;
   }
 
+  async getTransactions(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('blockchain_transactions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data || [];
+    } catch (err: any) {
+      console.error('[WALLET_SERVICE] Transactions fetch failed:', err.message);
+      return [];
+    }
+  }
+
   async sweepFunds(fromAddress: string, privateKey: string, amount: number, toAddress: string): Promise<string | null> {
     try {
       const sweepTronWeb = new TronWeb({
