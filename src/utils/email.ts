@@ -3,32 +3,28 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const smtpPort = Number(process.env.SMTP_PORT) || 587;
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === 'true', // true for 465, false for others
+  port: smtpPort,
+  secure: smtpPort === 465 || process.env.SMTP_SECURE === 'true',
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  // CRITICAL FIX: Force IPv4 to prevent ENETUNREACH resolution to IPv6
-  // Many production environments (like Render/DigitalOcean) have flaky IPv6 SMTP routing
   family: 4, 
-  // Production resiliency settings
-  pool: true,
-  maxConnections: 5,
-  maxMessages: 100,
-  connectionTimeout: 30000, // Increased to 30s for slower production networks
-  greetingTimeout: 15000,   // Increased to 15s
-  socketTimeout: 30000,     // Added socket timeout
-  dnsTimeout: 10000,        // Added DNS timeout
+  pool: false,
+  connectionTimeout: 30000, 
+  greetingTimeout: 30000,   
+  socketTimeout: 30000,
   tls: {
-    // Do not fail on invalid certs in production if using standard SMTP
+    servername: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
     rejectUnauthorized: false,
     minVersion: 'TLSv1.2'
   },
-  debug: process.env.NODE_ENV !== 'production', // Enable debug logs in non-prod
-  logger: false
+  // CRITICAL: Always enable logs for now to diagnose production
+  debug: true,
+  logger: true
 } as any);
 
 /**
