@@ -23,6 +23,7 @@ const els = {
   createOrderBtn: document.getElementById('createOrderBtn'),
   orders: document.getElementById('orders'),
   balance: document.getElementById('balance'),
+  transactions: document.getElementById('transactions'),
   kyc: document.getElementById('kyc'),
   kycStatusBtn: document.getElementById('kycStatusBtn'),
   kycStatus: document.getElementById('kycStatus'),
@@ -59,6 +60,7 @@ function showApp() {
   els.kyc.classList.remove('hidden');
   startStreams();
   refreshRate();
+  refreshTransactions();
 }
 
 // Auth
@@ -130,6 +132,25 @@ async function refreshRate() {
   }
 }
 
+async function refreshTransactions() {
+  if (!els.transactions) return;
+  try {
+    const data = await api('/wallet/transactions', 'GET');
+    els.transactions.innerHTML = data.map(tx => `
+      <div class="p-2 border-b">
+        <div class="flex justify-between">
+          <span class="font-bold">${tx.amount} USDT</span>
+          <span class="text-sm text-gray-500">${new Date(tx.created_at).toLocaleString()}</span>
+        </div>
+        <div class="text-xs text-gray-400 truncate">${tx.tx_hash}</div>
+        <div class="text-xs uppercase ${tx.status === 'credited' ? 'text-green-500' : 'text-yellow-500'}">${tx.status}</div>
+      </div>
+    `).join('') || 'No transactions yet';
+  } catch (e) {
+    els.transactions.textContent = `Error: ${e.message}`;
+  }
+}
+
 els.createOrderBtn.onclick = async () => {
   try {
     const body = {
@@ -181,32 +202,40 @@ els.submitKycBtn.onclick = async () => {
 
 // Real-time streams (SSE with polling fallback)
 function startStreams() {
+  if (!token) return;
+
   // Balance stream
   try {
-    const esBal = new EventSource(`${API}/stream/balance`, { withCredentials: false });
+    // We pass the token via query param because EventSource doesn't support custom headers easily without a polyfill
+    const esBal = new EventSource(`${API}/stream/balance?token=${token}`);
     esBal.addEventListener('balance', (ev) => {
       const data = JSON.parse(ev.data);
       els.balance.textContent = `Available: ${data.available_balance ?? data.available}, Locked: ${data.locked_balance ?? data.locked}`;
     });
-    esBal.addEventListener('error', () => {
-      // Fallback to polling
+    esBal.addEventListener('error', (e) => {
+      console.warn('Balance SSE error, falling back to polling:', e);
+      esBal.close();
       pollBalance();
     });
-  } catch {
+  } catch (e) {
+    console.warn('Balance SSE failed to initialize:', e);
     pollBalance();
   }
 
   // Orders stream
   try {
-    const esOrders = new EventSource(`${API}/stream/orders`, { withCredentials: false });
+    const esOrders = new EventSource(`${API}/stream/orders?token=${token}`);
     esOrders.addEventListener('orders', (ev) => {
       const list = JSON.parse(ev.data) || [];
       els.orders.innerHTML = list.map(o => `<li>${o.id || ''} - ${o.status || ''} - ₹${o.inr_amount || ''}</li>`).join('');
     });
-    esOrders.addEventListener('error', () => {
+    esOrders.addEventListener('error', (e) => {
+      console.warn('Orders SSE error, falling back to polling:', e);
+      esOrders.close();
       pollOrders();
     });
-  } catch {
+  } catch (e) {
+    console.warn('Orders SSE failed to initialize:', e);
     pollOrders();
   }
 }

@@ -69,16 +69,43 @@ export class TronWorker {
 
       if (balanceUSDT > 0) {
         console.log(`[TRON_WORKER] Deposit detected: ${balanceUSDT} USDT at ${addr.tron_address}`);
+        const txHash = `DEP_${addr.tron_address}_${Date.now()}`;
+        
+        // Record in blockchain_transactions for user and admin tracking
+        const { error: txError } = await supabase
+          .from('blockchain_transactions')
+          .insert({
+            tx_hash: txHash,
+            network: config.nodeEnv === 'production' ? 'tron_mainnet' : 'tron_shasta',
+            from_address: 'unknown',
+            to_address: addr.tron_address,
+            amount: balanceUSDT,
+            status: 'credited',
+            user_id: addr.user_id,
+            processed_at: new Date().toISOString()
+          });
+
+        if (txError) {
+          console.error(`[TRON_WORKER] Error recording blockchain_transaction:`, txError.message);
+        }
         
         // Use RPC function for atomic credit
         const { data, error } = await supabase.rpc('credit_deposit', {
           p_user_id: addr.user_id,
           p_amount: balanceUSDT,
-          p_tx_hash: `DEP_${addr.tron_address}_${Date.now()}`, // Temporary ref until we get real TX list
+          p_tx_hash: txHash,
           p_description: `USDT Deposit via ${addr.tron_address}`
         });
 
-        if (error) throw error;
+        if (error) {
+          console.error(`[TRON_WORKER] RPC credit_deposit failed for ${addr.tron_address}:`, error.message);
+          return;
+        }
+
+        if (data && data.success === false) {
+          console.log(`[TRON_WORKER] Deposit already processed or failed: ${data.message}`);
+          return;
+        }
 
         // Mark address as used/processed
         await supabase
