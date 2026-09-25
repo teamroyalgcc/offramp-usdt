@@ -64,3 +64,11 @@ test('GasFree auth header signs METHOD + prefixed path + timestamp', () => {
   const expected = createHmac('sha256', 'secret').update('GET/tron/api/v1/address/TXXX1731912286').digest('base64');
   assert.deepEqual(h, { Timestamp: '1731912286', Authorization: `ApiKey key:${expected}` });
 });
+
+test('deposit fee = live GasFree fee + margin, activation only on the first deposit', async () => {
+  const { depositFee } = await import('./gasfree.js');
+  const acct = { active: false, activateFee: 1_000_000n, transferFee: 1_200_000n };
+  assert.equal(depositFee(acct, true, 500_000n), 2_700_000n);                     // first deposit, new address
+  assert.equal(depositFee(acct, false, 500_000n), 1_700_000n);                    // second deposit before first sweep
+  assert.equal(depositFee({ ...acct, active: true }, true, 500_000n), 1_700_000n); // already activated
+});

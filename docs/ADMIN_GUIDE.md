@@ -69,7 +69,8 @@ A technical person changes these in Render → the service → Environment. The 
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `DEPOSIT_PROCESSING_FEE_USDT` | 1.5 | Fee taken from each deposit. |
+| `DEPOSIT_FEE_MARGIN_USDT` | 0.5 | Added to GasFree's live fee on each deposit. The user pays live fee plus this. |
+| `DEPOSIT_PROCESSING_FEE_USDT` | 1.5 | Fallback fee, used only if GasFree cannot be reached. |
 | `DEPOSIT_MIN_NET_USDT` | 10 | Deposits worth less than this after the fee wait for your approval. |
 | `GASFREE_MAX_FEE_USDT` | 3 | The system refuses to pay more than this per transfer to treasury. |
 | `ALERT_EMAIL` | none | Where the daily problem email goes. |

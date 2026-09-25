@@ -23,7 +23,8 @@ const configSchema = z.object({
   GASFREE_API_SECRET: z.string().optional(),
   GASFREE_PROVIDER_ADDRESS: z.string().optional(),
   DEPOSIT_MIN_NET_USDT: z.string().default('10'),
-  DEPOSIT_PROCESSING_FEE_USDT: z.string().default('1.5'),
+  DEPOSIT_PROCESSING_FEE_USDT: z.string().default('1.5'), // fallback only, used when GasFree cannot quote a live fee
+  DEPOSIT_FEE_MARGIN_USDT: z.string().default('0.5'),     // added on top of the live GasFree fee
   GASFREE_MAX_FEE_USDT: z.string().default('3'),
   ALERT_EMAIL: z.string().optional(),
   DATABASE_URL: z.string().optional(),
@@ -64,6 +65,7 @@ export const config = {
     providerAddress: validatedConfig.GASFREE_PROVIDER_ADDRESS,
     minNetUsdt: validatedConfig.DEPOSIT_MIN_NET_USDT,
     processingFeeUsdt: validatedConfig.DEPOSIT_PROCESSING_FEE_USDT,
+    feeMarginUsdt: validatedConfig.DEPOSIT_FEE_MARGIN_USDT,
     maxFeeUsdt: validatedConfig.GASFREE_MAX_FEE_USDT,
   },
   alertEmail: validatedConfig.ALERT_EMAIL || '',

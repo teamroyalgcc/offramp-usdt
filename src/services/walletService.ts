@@ -5,6 +5,7 @@ import { TronChain } from '../tron/chain.js';
 import { GASFREE_NETWORKS } from '../tron/gasfree.js';
 import { loadAccountXpub } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
+import gasfreeWorker from '../workers/gasfreeWorker.js';
 
 const chain = new TronChain({
   fullNode: config.tron.fullNode,
@@ -48,7 +49,7 @@ export class WalletService {
 
     const find = () => supabase
       .from('deposit_addresses')
-      .select('id, tron_address')
+      .select('id, tron_address, eoa_address')
       .eq('user_id', userId)
       .eq('network', 'tron')
       .eq('method', 'gasfree')
@@ -84,7 +85,7 @@ export class WalletService {
           hot_until: watchUntil,
           next_poll_at: now,
         })
-        .select('id, tron_address')
+        .select('id, tron_address, eoa_address')
         .single();
 
       if (insErr?.code === '23505') {
@@ -98,7 +99,8 @@ export class WalletService {
       }
     }
 
-    const fee = parseUsdt(config.gasfree.processingFeeUsdt);
+    // Live quote: what the next deposit to this address will be charged.
+    const fee = await gasfreeWorker.depositFeeRaw(row!.id, row!.eoa_address);
     const minNet = parseUsdt(config.gasfree.minNetUsdt);
     return {
       depositAddressId: row!.id,

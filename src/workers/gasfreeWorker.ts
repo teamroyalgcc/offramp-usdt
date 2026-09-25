@@ -1,7 +1,7 @@
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { GasFreeClient, GasFreeRejected, Permit, recoverPermitSigner, signPermit } from '../tron/gasfree.js';
+import { depositFee, GasFreeClient, GasFreeRejected, Permit, recoverPermitSigner, signPermit } from '../tron/gasfree.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -46,7 +46,20 @@ export class GasFreeWorker {
   private running = false;
   private minNetRaw = parseUsdt(config.gasfree.minNetUsdt);
   private feeRaw = parseUsdt(config.gasfree.processingFeeUsdt);
+  private marginRaw = parseUsdt(config.gasfree.feeMarginUsdt);
   private maxFeeRaw = parseUsdt(config.gasfree.maxFeeUsdt);
+
+  /** Live processing fee for the next deposit to this address. Falls back to the fixed fee if GasFree is unreachable. */
+  async depositFeeRaw(depositAddressId: string, eoa: string): Promise<bigint> {
+    try {
+      const acct = await this.gasfree.getAccount(eoa, USDT);
+      const { rows } = await query(`SELECT 1 FROM deposits WHERE deposit_address_id = $1 AND status = 'credited' LIMIT 1`, [depositAddressId]);
+      return depositFee(acct, rows.length === 0, this.marginRaw);
+    } catch (e: any) {
+      log('live fee quote failed, using fixed fee', { error: e.message });
+      return this.feeRaw;
+    }
+  }
 
   /** Validates config synchronously; provider setup is retried inside the loop. */
   async start() {
@@ -111,7 +124,7 @@ export class GasFreeWorker {
 
   private async pollDueAddresses() {
     const { rows } = await query(
-      `SELECT id, tron_address, created_at, last_polled_at, hot_until
+      `SELECT id, tron_address, eoa_address, created_at, last_polled_at, hot_until
          FROM deposit_addresses
         WHERE method = 'gasfree' AND network = 'tron' AND next_poll_at <= NOW()
         ORDER BY next_poll_at LIMIT 20`,
@@ -141,7 +154,7 @@ export class GasFreeWorker {
       : new Set();
     for (const txId of txIds.filter((id) => !known.has(id))) {
       for (const t of await this.chain.solidTransfersTo(txId, USDT, a.tron_address)) {
-        await this.record(a.id, t);
+        await this.record(a.id, a.eoa_address, t);
       }
     }
     // Outside the watch window the address sleeps until the user opens the deposit screen again.
@@ -154,7 +167,7 @@ export class GasFreeWorker {
   /** Admin "Check again": rescans the address's full history now. Returns deposits found. */
   async scanNow(depositAddressId: string) {
     const { rows } = await query(
-      `SELECT id, tron_address, created_at, NULL AS last_polled_at, hot_until
+      `SELECT id, tron_address, eoa_address, created_at, NULL AS last_polled_at, hot_until
          FROM deposit_addresses WHERE id = $1 AND method = 'gasfree'`,
       [depositAddressId],
     );
@@ -165,11 +178,12 @@ export class GasFreeWorker {
     return { newDeposits: after.rows[0].n - before.rows[0].n };
   }
 
-  private async record(depositAddressId: string, t: Awaited<ReturnType<TronChain['solidTransfersTo']>>[number]) {
+  private async record(depositAddressId: string, eoa: string, t: Awaited<ReturnType<TronChain['solidTransfersTo']>>[number]) {
+    const feeRaw = await this.depositFeeRaw(depositAddressId, eoa);
     const { rows } = await query(
       `SELECT record_deposit($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) AS r`,
       [`tron_${NETWORK}`, depositAddressId, t.txId, t.logIndex, t.from, t.amountRaw.toString(),
-        t.blockNumber, t.blockTs, this.minNetRaw.toString(), this.feeRaw.toString()],
+        t.blockNumber, t.blockTs, this.minNetRaw.toString(), feeRaw.toString()],
     );
     const r = rows[0].r;
     if (!r.inserted) return;

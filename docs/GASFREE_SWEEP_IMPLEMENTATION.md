@@ -106,7 +106,8 @@ Real numbers seen in 2026 wallets range from about **1 to 1.5 USDT per transfer*
 
 Settings:
 
-- **`DEPOSIT_PROCESSING_FEE_USDT`** (default 1.5). This is charged to the user per deposit and shown as the "Processing fee" in the app. Set it to the live transfer fee plus a small margin. The margin covers the one-time activation spread over a user's deposits.
+- **Processing fee (live).** Each deposit is charged GasFree's live `transferFee` for that address, plus `activateFee` on the address's first credited deposit (the first sweep pays activation), plus **`DEPOSIT_FEE_MARGIN_USDT`** (default 0.5). The Deposit screen shows the same live quote before the user sends. It is quoted when the deposit is credited; the margin absorbs small moves before the sweep. Two deposits before one sweep each pay a transfer fee, and the platform keeps the difference.
+- **`DEPOSIT_PROCESSING_FEE_USDT`** (default 1.5). Fallback only: used when the GasFree API cannot be reached at credit time, so deposits are never blocked.
 - **`GASFREE_MAX_FEE_USDT`** (default 3). This is a safety cap per sweep. If GasFree asks for more, nothing moves and the admin sees "fee above your safety limit".
 - **`DEPOSIT_MIN_NET_USDT`** (default 10). Deposits worth less than this after the fee are held for review.
 

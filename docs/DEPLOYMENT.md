@@ -116,7 +116,8 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    | `GASFREE_API_SECRET` | from Step 3 |
    | `HD_MNEMONIC` | the deposit seed phrase from Step 1 |
    | `TREASURY_ADDRESS` | treasury **address** from Step 1 |
-   | `DEPOSIT_PROCESSING_FEE_USDT` | `1.5` (adjust after the first live sweep, see Step 8) |
+   | `DEPOSIT_FEE_MARGIN_USDT` | `0.5` (added to the live GasFree fee on each deposit) |
+   | `DEPOSIT_PROCESSING_FEE_USDT` | `1.5` (fallback only, used when GasFree cannot quote a live fee) |
    | `DEPOSIT_MIN_NET_USDT` | `10` |
    | `GASFREE_MAX_FEE_USDT` | `3` |
    | `BREVO_API_KEY` | from Step 3 |
@@ -169,14 +170,14 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
 
 1. In the app: sign in, complete KYC and add a bank account. In the admin panel: approve the KYC.
    - Profile → **Transaction PIN** → set a 6-digit PIN. Try selling before setting it: the app must send you to the PIN screen first.
-2. **Deposit.** Open Deposit in the app and send **15 USDT (TRC20)** from any wallet or exchange to the address shown.
-   - Within about 1 to 3 minutes the app shows "Deposit received", and the balance becomes 15 minus the processing fee.
+2. **Deposit.** Open Deposit in the app. It shows the **live** processing fee for this address: GasFree's transfer fee, plus the one-time activation fee on an address's first deposit, plus `DEPOSIT_FEE_MARGIN_USDT`. Expect about 2.5 to 3.5 USDT for a first deposit and 1.5 to 2 USDT after that. Send **20 USDT (TRC20)** from any wallet or exchange to the address shown.
+   - Within about 1 to 3 minutes the app shows "Deposit received", and the balance becomes 20 minus the fee shown.
    - In the admin Dashboard, the deposit appears as **Credited**, then **Moved to treasury** a few minutes later.
    - On <https://tronscan.org>, the treasury address received the USDT minus GasFree's fee.
-3. **Set the real fee.** Check the `started` line in the Render logs, or `sweeps.actual_fee_raw` in Supabase (divide by 1,000,000). Set `DEPOSIT_PROCESSING_FEE_USDT` to about that transfer fee plus 0.3 to 0.5 USDT.
-4. **Sell order.** The minimum sell is 10 USDT (`system_settings.min_exchange_usdt`). With the 13.5 USDT balance from step 2:
-   - Sell 10 USDT. Admin → Sell Orders → open the order → choose **Refund**. The balance returns to 13.5.
-   - Sell 10 USDT again. Send the INR to the bank shown → choose **Paid**, enter the UTR and confirm. The order shows as completed in the app, and the balance is 3.5.
+3. **Check the margin.** Compare the fee charged (History → Statement → Processing fee) with the real sweep fee in `sweeps.actual_fee_raw` in Supabase (divide by 1,000,000). The difference is the margin. Change `DEPOSIT_FEE_MARGIN_USDT` in Render if you want it higher or lower.
+4. **Sell order.** The minimum sell is 10 USDT (`system_settings.min_exchange_usdt`). With the balance from step 2 (about 16.5 to 17.5 USDT):
+   - Sell 10 USDT. Admin → Sell Orders → open the order → choose **Refund**. The balance returns to what it was.
+   - Sell 10 USDT again. Send the INR to the bank shown → choose **Paid**, enter the UTR and confirm. The order shows as completed in the app, and the balance drops by 10.
    - **PIN checks.** Enter a wrong PIN: the order is refused ("Wrong PIN. 4 attempts left."). Five wrong PINs lock sells and withdrawals for 15 minutes. **Forgot PIN?** on the PIN screen sends an email code and lets you set a new PIN without the old one.
 5. **Withdrawal (optional).** Request a 20 USDT withdrawal.
    - Admin → USDT Withdrawals → send the "Send this" amount from the treasury in TronLink → **Mark as sent** → paste the tx hash. A wrong hash or amount is refused with a clear message.

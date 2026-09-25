@@ -70,6 +70,13 @@ export interface GasFreeTransfer {
 }
 
 /** Provider answered with a definite rejection (code != 200). Safe to act on. */
+// Processing fee charged on a deposit: what GasFree will charge to sweep it, plus our margin.
+// The one-time activation fee is paid by the address's first sweep, so only the first
+// credited deposit of an address carries it.
+export function depositFee(acct: Pick<GasFreeAccount, 'active' | 'activateFee' | 'transferFee'>, firstDeposit: boolean, marginRaw: bigint): bigint {
+  return acct.transferFee + (!acct.active && firstDeposit ? acct.activateFee : 0n) + marginRaw;
+}
+
 export class GasFreeRejected extends Error {
   constructor(public reason: string, message: string, public data?: unknown) {
     super(`${reason}: ${message}`);
