@@ -174,7 +174,7 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
    - In the admin Dashboard, the deposit appears as **Credited**, then **Moved to treasury** a few minutes later.
    - On <https://tronscan.org>, the treasury address received the USDT minus GasFree's fee.
 3. **Set the real fee.** Check the `started` line in the Render logs, or `sweeps.actual_fee_raw` in Supabase (divide by 1,000,000). Set `DEPOSIT_PROCESSING_FEE_USDT` to about that transfer fee plus 0.3 to 0.5 USDT.
-4. **Sell order.** Sell 5 USDT in the app.
+4. **Sell order.** The minimum sell is 50 USDT (`system_settings.min_exchange_usdt`). For the test, lower it in the SQL Editor with `UPDATE system_settings SET min_exchange_usdt = 5;`, then Render → **Manual Deploy → Restart service** (settings load at startup). Sell 5 USDT in the app. **Set it back to 50 and restart after the test.**
    - Admin → Sell Orders → open the order → send the INR to the bank shown → choose **Paid**, enter the UTR and confirm. The order shows as completed in the app.
    - Place a second order and choose **Refund** instead. The balance comes back.
    - **PIN checks.** Enter a wrong PIN: the order is refused ("Wrong PIN. 4 attempts left."). Five wrong PINs lock sells and withdrawals for 15 minutes. **Forgot PIN?** on the PIN screen sends an email code and lets you set a new PIN without the old one.
