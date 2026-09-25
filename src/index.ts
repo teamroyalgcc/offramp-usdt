@@ -66,6 +66,7 @@ apiRouter.use('/auth', generalAuthRouter);
 const walletRouter = express.Router();
 walletRouter.get('/balance', authenticate, walletController.getBalance.bind(walletController));
 walletRouter.post('/generate-address', authenticate, walletController.generateAddress.bind(walletController));
+walletRouter.get('/statement', authenticate, walletController.getStatement.bind(walletController));
 walletRouter.get('/deposits', authenticate, walletController.listDeposits.bind(walletController));
 
 apiRouter.use('/wallet', walletRouter);

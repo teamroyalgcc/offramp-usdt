@@ -4,6 +4,7 @@ import { generateToken } from '../utils/jwt.js';
 import supabase from '../utils/supabase.js';
 import { sendOTPEmail } from '../utils/email.js';
 import { auditService } from '../services/auditService.js';
+import { checkPin, hashPin, isValidPin } from '../utils/pin.js';
 
 // ponytail: in-memory, single instance. Move to the DB if the API ever runs more than one instance.
 const otpFailures = new Map<string, number>();
@@ -96,7 +97,10 @@ export class AuthController {
 
       delete user.password_hash;
       delete user.email_verification_token;
-      
+      delete user.email_otp;
+      user.has_pin = !!user.transaction_pin_hash;
+      delete user.transaction_pin_hash;
+
       return res.status(200).json({ user });
     } catch (error: any) {
       console.error('Fetch Me Error:', error);
@@ -211,7 +215,9 @@ export class AuthController {
         .update({
           email_verified: true,
           email_otp: null,
-          email_otp_expires: null
+          email_otp_expires: null,
+          // "Forgot PIN": proving email access lets the user set a new PIN without the old one for 10 minutes.
+          pin_reset_until: new Date(Date.now() + 10 * 60 * 1000).toISOString()
         })
         .eq('id', user.id);
 
@@ -235,6 +241,54 @@ export class AuthController {
     } catch (error: any) {
       console.error('Verify Email OTP Error:', error);
       return res.status(500).json({ error: 'An unexpected error occurred. Please try again.' });
+    }
+  }
+
+  // ==========================
+  // TRANSACTION PIN
+  // ==========================
+  static async pinStatus(req: Request, res: Response): Promise<any> {
+    try {
+      const userId = (req as any).user.id;
+      const { data: user, error } = await supabase.from('users').select('transaction_pin_hash').eq('id', userId).single();
+      if (error) throw error;
+      return res.status(200).json({ hasPin: !!user.transaction_pin_hash });
+    } catch (error: any) {
+      console.error('PIN Status Error:', error);
+      return res.status(500).json({ error: 'Internal server error.' });
+    }
+  }
+
+  // Body { pin, currentPin? }. currentPin is required to change an existing PIN,
+  // unless the user just verified an email OTP (forgot PIN).
+  static async setPin(req: Request, res: Response): Promise<any> {
+    try {
+      const userId = (req as any).user.id;
+      const { pin, currentPin } = req.body ?? {};
+      if (!isValidPin(pin)) return res.status(400).json({ error: 'The PIN must be exactly 6 digits.' });
+
+      const { data: user, error } = await supabase
+        .from('users').select('transaction_pin_hash, pin_reset_until').eq('id', userId).single();
+      if (error) throw error;
+
+      const resetAllowed = user.pin_reset_until && new Date(user.pin_reset_until) > new Date();
+      if (user.transaction_pin_hash && !resetAllowed) {
+        if (currentPin === undefined) {
+          return res.status(400).json({ error: 'Enter your current PIN. Forgot it? Log in again with an email code to reset it.' });
+        }
+        const pinError = await checkPin(userId, currentPin, user.transaction_pin_hash);
+        if (pinError) return res.status(401).json({ error: pinError });
+      }
+
+      const { error: updateError } = await supabase
+        .from('users').update({ transaction_pin_hash: await hashPin(pin), pin_reset_until: null }).eq('id', userId);
+      if (updateError) throw updateError;
+
+      await auditService.log('user', userId, user.transaction_pin_hash ? 'PIN_CHANGED' : 'PIN_SET', userId, { via_reset: !!resetAllowed }, req.ip);
+      return res.status(200).json({ success: true, hasPin: true });
+    } catch (error: any) {
+      console.error('Set PIN Error:', error);
+      return res.status(500).json({ error: 'Internal server error.' });
     }
   }
 }

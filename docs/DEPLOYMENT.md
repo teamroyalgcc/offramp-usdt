@@ -168,6 +168,7 @@ One always-on service uses about 744 of Render's 750 free hours per month, so ru
 There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Use a test user account.
 
 1. In the app: sign in, complete KYC and add a bank account. In the admin panel: approve the KYC.
+   - Profile → **Transaction PIN** → set a 6-digit PIN. Try selling before setting it: the app must send you to the PIN screen first.
 2. **Deposit.** Open Deposit in the app and send **15 USDT (TRC20)** from any wallet or exchange to the address shown.
    - Within about 1 to 3 minutes the app shows "Deposit received", and the balance becomes 15 minus the processing fee.
    - In the admin Dashboard, the deposit appears as **Credited**, then **Moved to treasury** a few minutes later.
@@ -176,9 +177,11 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
 4. **Sell order.** Sell 5 USDT in the app.
    - Admin → Sell Orders → open the order → send the INR to the bank shown → choose **Paid**, enter the UTR and confirm. The order shows as completed in the app.
    - Place a second order and choose **Refund** instead. The balance comes back.
+   - **PIN checks.** Enter a wrong PIN: the order is refused ("Wrong PIN. 4 attempts left."). Five wrong PINs lock sells and withdrawals for 15 minutes. **Forgot PIN?** on the PIN screen sends an email code and lets you set a new PIN without the old one.
 5. **Withdrawal (optional).** Request a 20 USDT withdrawal.
    - Admin → USDT Withdrawals → send the "Send this" amount from the treasury in TronLink → **Mark as sent** → paste the tx hash. A wrong hash or amount is refused with a clear message.
-6. Admin Dashboard → **Run check now**. It should say "Nothing to do".
+6. **Statement.** History → **Statement** lists every change: Deposit, Processing fee, Sell order (locked), Sell order refunded, Withdrawal (locked), Withdrawal refunded. The top row's balance equals the app balance.
+7. Admin Dashboard → **Run check now**. It should say "Nothing to do".
 
 ## Step 9. Android app (APK) with EAS (30 to 60 min)
 

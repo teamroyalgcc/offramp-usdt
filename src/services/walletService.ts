@@ -17,6 +17,15 @@ const chain = new TronChain({
 // since the last check, so late transfers are still found.
 export const WATCH_WINDOW_MS = 60 * 60 * 1000;
 
+const STATEMENT_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  deposit_fee: 'Processing fee',
+  exchange_lock: 'Sell order (locked)',
+  exchange_refund: 'Sell order refunded',
+  withdrawal_lock: 'Withdrawal (locked)',
+  withdrawal_refund: 'Withdrawal refunded',
+};
+
 export class WalletService {
   private static instance: WalletService;
 
@@ -100,6 +109,32 @@ export class WalletService {
       minimumDeposit: formatUsdt(minNet + fee),
       watchingUntil: watchUntil,
     };
+  }
+
+  // Every change to the available balance, newest first. Cursor = (before, beforeId) of the last row seen;
+  // the id breaks ties because a deposit and its fee share one created_at.
+  async getStatement(userId: string, limit = 50, before?: string, beforeId?: string) {
+    let q = supabase
+      .from('ledger_entries')
+      .select('id, type, amount, direction, balance_after, reference_id, created_at')
+      .eq('user_id', userId)
+      .eq('balance_type', 'available')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(Math.min(Math.max(limit, 1), 100));
+    if (before && beforeId) q = q.or(`created_at.lt.${before},and(created_at.eq.${before},id.lt.${beforeId})`);
+    else if (before) q = q.lt('created_at', before);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []).map((e: any) => ({
+      id: e.id,
+      type: e.type,
+      label: STATEMENT_LABELS[e.type] ?? e.type,
+      amount: (e.direction === 'credit' ? '' : '-') + e.amount,
+      balance_after: e.balance_after,
+      reference: e.reference_id,
+      created_at: e.created_at,
+    }));
   }
 
   async listDeposits(userId: string) {

@@ -3,6 +3,7 @@ import { BaseController } from './baseController.js';
 import withdrawalService from '../services/withdrawalService.js';
 import { AuthRequest } from '../middleware/authMiddleware.js';
 import { TronWeb } from 'tronweb';
+import { AuthService } from '../services/auth.service.js';
 
 export class WithdrawalController extends BaseController {
   async requestWithdrawal(req: AuthRequest, res: Response) {
@@ -19,6 +20,9 @@ export class WithdrawalController extends BaseController {
       if (!TronWeb.isAddress(destination_address)) {
         return this.clientError(res, 'Invalid Tron address');
       }
+
+      const pinError = await AuthService.verifyTransactionPin(req.user.id, req.body.pin);
+      if (pinError) return this.forbidden(res, pinError);
 
       const withdrawal = await withdrawalService.requestUSDTWithdrawal(req.user.id, {
         destination_address,

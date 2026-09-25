@@ -24,6 +24,19 @@ export class WalletController extends BaseController {
     }
   }
 
+  async getStatement(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) return this.unauthorized(res);
+      const { limit, before, beforeId } = req.query as Record<string, string | undefined>;
+      // The cursor goes into a PostgREST filter string: accept only a timestamp and a uuid.
+      if (before && (!/^[\d\-T:.+ Z]+$/.test(before) || isNaN(Date.parse(before)))) return this.clientError(res, 'Invalid before');
+      if (beforeId && !/^[0-9a-f-]{36}$/i.test(beforeId)) return this.clientError(res, 'Invalid beforeId');
+      return this.ok(res, await walletService.getStatement(req.user.id, Number(limit) || 50, before, beforeId));
+    } catch (error: any) {
+      return this.fail(res, error);
+    }
+  }
+
   async getBalance(req: AuthRequest, res: Response) {
     try {
       console.log(`[WALLET_CONTROLLER] Balance request for user: ${req.user?.id}`);

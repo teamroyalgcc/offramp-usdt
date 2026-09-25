@@ -1,5 +1,8 @@
 import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
+
+// Admins never see login codes or PIN hashes (a 6-digit PIN hash is brute-forceable).
+const stripSecrets = ({ email_otp, email_otp_expires, transaction_pin_hash, password_hash, ...u }: any) => u;
 import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
 import tronService from './tronService.js';
@@ -264,7 +267,7 @@ export class AdminService {
     if (error) throw error;
     // KYC photos live in a private bucket; hand the admin a link that expires in 1 hour.
     const marker = '/KYC-DOCUMENTS/';
-    return Promise.all((data ?? []).map(async (u: any) => {
+    return Promise.all((data ?? []).map(stripSecrets).map(async (u: any) => {
       const url: string = u.aadhaar_photo_url || '';
       if (!url.includes(marker)) return u;
       const path = decodeURIComponent(url.slice(url.indexOf(marker) + marker.length).split('?')[0]);
@@ -493,7 +496,7 @@ export class AdminService {
       .select('*')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return data;
+    return (data ?? []).map(stripSecrets);
   }
 
   async freezeUser(userId: string, frozen: boolean, adminId: string) {

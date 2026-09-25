@@ -3,6 +3,7 @@ import { BaseController } from './baseController.js';
 import exchangeService from '../services/exchangeService.js';
 import { AuthRequest } from '../middleware/authMiddleware.js';
 import { z } from 'zod';
+import { AuthService } from '../services/auth.service.js';
 
 const createOrderSchema = z.object({
   usdtAmount: z.number().positive(),
@@ -32,6 +33,9 @@ export class ExchangeController extends BaseController {
       if (!parsed.success) {
         return this.clientError(res, 'Invalid order data');
       }
+
+      const pinError = await AuthService.verifyTransactionPin(req.user.id, req.body.pin);
+      if (pinError) return this.forbidden(res, pinError);
 
       const result = await exchangeService.createExchangeOrder(
         req.user.id,

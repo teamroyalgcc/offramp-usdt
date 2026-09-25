@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS public.users (
   email_otp_expires TIMESTAMPTZ,
   email_verification_token TEXT,
   password_hash TEXT,
+  transaction_pin_hash TEXT,    -- bcrypt of the 6-digit PIN that confirms sell orders and withdrawals
+  pin_reset_until TIMESTAMPTZ,  -- set by a fresh email OTP login: PIN can be reset without the old one until then
   google_id TEXT,
   auth_provider TEXT,
   account_holder_name TEXT,

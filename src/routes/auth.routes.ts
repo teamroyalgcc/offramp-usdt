@@ -28,4 +28,11 @@ router.post('/verify-email-otp', AuthController.verifyEmailOTP);
  */
 router.get('/me', authenticate, AuthController.me);
 
+/**
+ * @route   GET /api/auth/pin/status  -> { hasPin }
+ * @route   POST /api/auth/pin        body { pin, currentPin? }: set or change the 6-digit transaction PIN
+ */
+router.get('/pin/status', authenticate, AuthController.pinStatus);
+router.post('/pin', authenticate, AuthController.setPin);
+
 export default router;

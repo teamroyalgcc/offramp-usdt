@@ -49,6 +49,7 @@ You also get an email every day there is something on the attention panel.
 - **Check that the money came in.** For a large or unusual order, confirm that the user's deposits appear in the Dashboard deposit list, marked **Credited** and **Moved to treasury**.
 - **Never pay from a message.** Never pay because of an email, chat or phone call. Only pay orders and withdrawals shown in the admin panel.
 - **Each staff member uses their own login.** Superadmins create accounts in **Role Management**. Delete accounts of people who leave.
+- **Never ask a user for their transaction PIN.** Every sell order and withdrawal is confirmed with the user's 6-digit PIN. Staff cannot see or reset it. A user who forgot it taps **Forgot PIN?** in Profile → Transaction PIN and confirms with an email code. After 5 wrong PINs, selling and withdrawing are blocked for 15 minutes.
 
 ## Keys and wallets
 
