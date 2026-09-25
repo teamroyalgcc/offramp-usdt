@@ -4,11 +4,35 @@ import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
 import tronService from './tronService.js';
 
-import ledgerService from './ledgerService.js';
 import configService from './configService.js';
 import { v4 as uuidv4 } from 'uuid';
-import walletService from './walletService.js';
-import { decrypt } from '../utils/crypto.js';
+import { query } from '../utils/db.js';
+import gasfreeWorker from '../workers/gasfreeWorker.js';
+import { formatUsdt } from '../tron/usdt.js';
+import wsService from './wsService.js';
+
+const usdt = (raw: unknown) => (raw == null ? null : formatUsdt(BigInt(String(raw))));
+
+/** Plain-language explanation and allowed action for a failed transfer to treasury. */
+function explainFailedSweep(lastError: string | null) {
+  const e = lastError ?? '';
+  if (e.startsWith('fee_cap')) {
+    return {
+      explanation: `GasFree asked for a fee of ${usdt(e.split(':')[1]) ?? '?'} USDT, which is above your safety limit (GASFREE_MAX_FEE_USDT = ${config.gasfree.maxFeeUsdt}). The money is safe in the deposit address. Raise the limit on the server, or wait for fees to drop, then click Retry.`,
+      canRetry: true,
+    };
+  }
+  if (e === 'address_mismatch') {
+    return { explanation: 'GasFree reported a different address than ours. Do NOT retry. Contact the developer.', canRetry: false };
+  }
+  if (e === 'ambiguous_submit_nonce_consumed') {
+    return {
+      explanation: 'GasFree may already have moved these funds, but we could not confirm it. Check the treasury wallet on tronscan.org first. Contact the developer before retrying.',
+      canRetry: false,
+    };
+  }
+  return { explanation: `GasFree did not complete the transfer after several tries (${e || 'unknown reason'}). The money is safe in the deposit address. Click Retry.`, canRetry: true };
+}
 
 export class AdminService {
   private static instance: AdminService;
@@ -212,9 +236,10 @@ export class AdminService {
       { count: pendingWithdrawals }
     ] = await Promise.all([
       supabase.from('users').select('*', { count: 'exact', head: true }).eq('kyc_status', 'pending'),
-      supabase.from('exchange_orders').select('*', { count: 'exact', head: true }).eq('status', 'processing'),
+      supabase.from('exchange_orders').select('*', { count: 'exact', head: true }).eq('status', 'PROCESSING'),
       supabase.from('usdt_withdrawals').select('*', { count: 'exact', head: true }).eq('status', 'pending')
     ]);
+    const health = await this.getDepositHealth();
 
     return {
       treasury: {
@@ -224,7 +249,8 @@ export class AdminService {
       stats: {
         pendingKYC: pendingKYC || 0,
         pendingOrders: pendingOrders || 0,
-        pendingWithdrawals: pendingWithdrawals || 0
+        pendingWithdrawals: pendingWithdrawals || 0,
+        depositItemsNeedingAttention: health.items.filter((i) => i.action || i.severity === 'high').length,
       }
     };
   }
@@ -236,7 +262,15 @@ export class AdminService {
       .neq('kyc_status', 'not_submitted')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return data;
+    // KYC photos live in a private bucket; hand the admin a link that expires in 1 hour.
+    const marker = '/KYC-DOCUMENTS/';
+    return Promise.all((data ?? []).map(async (u: any) => {
+      const url: string = u.aadhaar_photo_url || '';
+      if (!url.includes(marker)) return u;
+      const path = decodeURIComponent(url.slice(url.indexOf(marker) + marker.length).split('?')[0]);
+      const { data: signed } = await supabase.storage.from('KYC-DOCUMENTS').createSignedUrl(path, 3600);
+      return { ...u, aadhaar_photo_url: signed?.signedUrl ?? null };
+    }));
   }
 
   async approveKyc(userId: string, adminId: string) {
@@ -260,83 +294,144 @@ export class AdminService {
     return { success: true };
   }
 
+  /** Recent USDT deposits with user and treasury-transfer status. */
   async getDeposits() {
-    const { data, error } = await supabase
-      .from('blockchain_transactions')
-      .select('*, users(email, account_number)')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+    const { rows } = await query(
+      `SELECT d.id, d.tx_id, d.amount_raw, d.fee_raw, d.status, d.block_ts, d.from_address,
+              d.user_id, u.email, u.account_holder_name, a.tron_address, a.id AS deposit_address_id,
+              CASE
+                WHEN d.status = 'review' THEN 'on_hold'
+                WHEN EXISTS (SELECT 1 FROM sweeps s WHERE s.deposit_address_id = d.deposit_address_id
+                              AND s.status = 'confirmed' AND s.amount_raw > 0 AND s.confirmed_at >= d.created_at) THEN 'done'
+                WHEN EXISTS (SELECT 1 FROM sweeps s WHERE s.deposit_address_id = d.deposit_address_id
+                              AND s.status = 'failed' AND s.updated_at >= d.created_at) THEN 'failed'
+                ELSE 'in_progress'
+              END AS treasury_transfer
+         FROM deposits d
+         JOIN deposit_addresses a ON a.id = d.deposit_address_id
+         LEFT JOIN users u ON u.id = d.user_id
+        ORDER BY d.created_at DESC LIMIT 200`,
+    );
+    return rows.map((r: any) => ({
+      id: r.id,
+      txId: r.tx_id,
+      user: { id: r.user_id, email: r.email, name: r.account_holder_name },
+      fromAddress: r.from_address,
+      depositAddress: r.tron_address,
+      amount: usdt(r.amount_raw),
+      processingFee: r.status === 'credited' ? usdt(r.fee_raw) : '0',
+      status: r.status === 'credited' ? 'credited' : 'on_hold',
+      treasuryTransfer: r.treasury_transfer,
+      receivedAt: r.block_ts,
+    }));
   }
 
-  async approveDeposit(txHash: string, adminId: string) {
-    const { data: tx } = await supabase.from('blockchain_transactions').select('*').eq('tx_hash', txHash).single();
-    if (!tx) throw new Error('Transaction not found');
-    if (tx.status === 'credited') throw new Error('Already credited');
+  /**
+   * Everything about deposits that needs a human, in plain language, with the
+   * one action the admin can take for each item (if any).
+   */
+  async getDepositHealth() {
+    const [failed, held, slow, audit] = await Promise.all([
+      query(`SELECT s.id, s.last_error, s.updated_at, a.tron_address, a.user_id, u.email
+               FROM sweeps s JOIN deposit_addresses a ON a.id = s.deposit_address_id LEFT JOIN users u ON u.id = a.user_id
+              WHERE s.status = 'failed' ORDER BY s.updated_at DESC`),
+      query(`SELECT d.id, d.amount_raw, d.fee_raw, d.block_ts, d.user_id, u.email
+               FROM deposits d LEFT JOIN users u ON u.id = d.user_id
+              WHERE d.status = 'review' ORDER BY d.created_at`),
+      query(`SELECT s.id, s.created_at, a.tron_address FROM sweeps s JOIN deposit_addresses a ON a.id = s.deposit_address_id
+              WHERE s.status IN ('pending', 'submitted') AND s.created_at < NOW() - interval '30 minutes'`),
+      query(`SELECT created_at, addresses_checked, issues FROM audit_reports ORDER BY created_at DESC LIMIT 1`),
+    ]);
 
-    const success = await ledgerService.creditDeposit(tx.user_id, tx.amount, txHash, `Deposit ${tx.amount} USDT`);
-    if (!success) throw new Error('Ledger credit failed');
-
-    await supabase.from('blockchain_transactions').update({ 
-      status: 'credited', 
-      processed_at: new Date().toISOString() 
-    }).eq('tx_hash', txHash);
-
-    const { data: addr } = await supabase.from('deposit_addresses').select('id').eq('tron_address', tx.to_address).maybeSingle();
-    if (addr) {
-      await supabase.from('deposit_addresses').update({ is_used: true }).eq('id', addr.id);
+    const items: any[] = [];
+    for (const s of failed.rows) {
+      const { explanation, canRetry } = explainFailedSweep(s.last_error);
+      items.push({
+        id: s.id, severity: 'high', title: 'Transfer to treasury failed', explanation,
+        user: s.email, address: s.tron_address, at: s.updated_at,
+        action: canRetry ? { label: 'Retry transfer', method: 'POST', path: `/api/admin/sweeps/${s.id}/retry` } : null,
+      });
     }
-
-    // Trigger Sweep
-    try {
-      const { data: addrData } = await supabase
-        .from('deposit_addresses')
-        .select('*')
-        .eq('tron_address', tx.to_address)
-        .single();
-
-      if (addrData) {
-        const treasuryWallet = await walletService.getWallet('treasury');
-        if (treasuryWallet) {
-          const privateKey = decrypt(addrData.private_key_encrypted);
-          if (privateKey) {
-            walletService.sweepFunds(
-              addrData.tron_address, 
-              privateKey, 
-              tx.amount, 
-              treasuryWallet.address
-            ).then(async (sweepTxHash: string | null) => {
-              if (sweepTxHash) {
-                await supabase.from('blockchain_transactions').update({ 
-                  sweep_tx_hash: sweepTxHash,
-                  swept_at: new Date().toISOString()
-                }).eq('tx_hash', txHash);
-              }
-            });
-          }
-        }
+    for (const d of held.rows) {
+      const amount = BigInt(String(d.amount_raw));
+      const fee = BigInt(String(d.fee_raw));
+      items.push({
+        id: d.id, severity: 'medium', title: 'Deposit below minimum (not credited yet)',
+        explanation: `The user sent ${usdt(amount)} USDT, below the minimum of ${formatUsdt(BigInt(Math.round(Number(config.gasfree.minNetUsdt) * 1e6)) + fee)} USDT. ` +
+          `Click "Credit anyway" to add ${usdt(amount > fee ? amount - fee : 0n)} USDT to their balance (processing fee deducted), or contact the user first.`,
+        user: d.email, at: d.block_ts,
+        action: { label: 'Credit anyway', method: 'POST', path: `/api/admin/deposits/${d.id}/credit` },
+      });
+    }
+    for (const s of slow.rows) {
+      items.push({
+        id: s.id, severity: 'low', title: 'Transfer to treasury is taking longer than usual',
+        explanation: 'The system keeps retrying automatically. No action needed unless this stays here for several hours.',
+        address: s.tron_address, at: s.created_at, action: null,
+      });
+    }
+    const last = audit.rows[0];
+    for (const i of last?.issues ?? []) {
+      if (i.kind === 'unrecorded_funds') {
+        items.push({
+          id: `${i.depositAddressId}:unrecorded`, severity: 'medium', title: 'USDT received but not recorded',
+          explanation: `${i.amount} USDT is sitting in a user's deposit address but was not credited, most likely because it was sent while the deposit screen was closed. Click "Check again" to find and credit it.`,
+          address: i.address, at: last.created_at,
+          action: { label: 'Check again', method: 'POST', path: `/api/admin/deposit-addresses/${i.depositAddressId}/scan` },
+        });
+      } else if (i.kind === 'balance_short') {
+        items.push({
+          id: `${i.depositAddressId}:short`, severity: 'high', title: 'Deposit address has less USDT than expected',
+          explanation: `${i.amount} USDT is missing compared with our records and no transfer to treasury is running. Contact the developer immediately.`,
+          address: i.address, at: last.created_at, action: null,
+        });
       }
-    } catch (sweepError) {
-      console.error('Sweep trigger failed:', sweepError);
     }
 
-    await this.logAction(adminId, 'DEPOSIT_APPROVE', 'transaction', txHash, { amount: tx.amount });
+    return {
+      status: items.some((i) => i.severity !== 'low') ? 'attention' : 'ok',
+      lastCheck: last ? { at: last.created_at, addressesChecked: last.addresses_checked } : null,
+      items,
+    };
+  }
+
+  async retrySweep(sweepId: string, adminId: string) {
+    const failed = await query(`SELECT last_error FROM sweeps WHERE id = $1 AND status = 'failed'`, [sweepId]);
+    if (!failed.rows[0]) throw new Error('This transfer is not in a failed state');
+    if (!explainFailedSweep(failed.rows[0].last_error).canRetry) throw new Error('This transfer must not be retried. Contact the developer.');
+    try {
+      await query(
+        `UPDATE sweeps SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND status = 'failed'`,
+        [sweepId],
+      );
+    } catch (e: any) {
+      if (e.code === '23505') throw new Error('Another transfer for this address is already running');
+      throw e;
+    }
+    await this.logAction(adminId, 'SWEEP_RETRY', 'sweep', sweepId);
     return { success: true };
   }
 
-  async manualCredit(userId: string, amount: number, txHash: string, adminId: string) {
-    const { data, error } = await supabase.rpc('credit_deposit', {
-      p_user_id: userId,
-      p_amount: amount,
-      p_tx_hash: txHash,
-      p_description: `Manual Credit by Admin (${adminId})`
-    });
-    
-    if (error) throw error;
-    if (!data.success) throw new Error(data.message);
-    
-    await this.logAction(adminId, 'MANUAL_CREDIT', 'ledger_accounts', userId, { amount, txHash });
-    return { success: true, balance: data.new_balance };
+  async creditHeldDeposit(depositId: string, adminId: string) {
+    const { rows } = await query(`SELECT credit_held_deposit($1) AS r`, [depositId]);
+    await this.logAction(adminId, 'DEPOSIT_CREDIT_HELD', 'deposit', depositId, rows[0].r);
+    return { success: true, ...rows[0].r };
+  }
+
+  /** Rescans one address, then re-runs the balance check so the list reflects the result. */
+  async scanDepositAddress(depositAddressId: string, adminId: string) {
+    const scan = await gasfreeWorker.scanNow(depositAddressId);
+    // ponytail: re-checks every address; fine for hundreds, scope to one address if it gets slow.
+    await gasfreeWorker.runAudit('manual');
+    await this.logAction(adminId, 'DEPOSIT_ADDRESS_SCAN', 'deposit_address', depositAddressId, scan);
+    return scan;
+  }
+
+  async runDepositAudit(adminId: string) {
+    const result = await gasfreeWorker.runAudit('manual');
+    await this.logAction(adminId, 'DEPOSIT_AUDIT_RUN', 'audit_reports', 'manual', { issues: result.issues.length });
+    return result;
   }
 
   async freezeAccount(userId: string, frozen: boolean, adminId: string) {
@@ -353,27 +448,28 @@ export class AdminService {
   async getOrders() {
     const { data, error } = await supabase
       .from('exchange_orders')
-      .select('*, users(email, account_number), bank_accounts(*)')
+      .select('*, users(email, account_holder_name), bank_accounts(*)')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data;
   }
 
+  /**
+   * The admin pays INR to the user's bank by hand, then completes the order here:
+   * SUCCESS = paid (note = bank reference / UTR, required); FAILED or REFUNDED =
+   * not paid, USDT goes back to the user's balance (note = reason).
+   */
   async updateOrderStatus(orderId: string, status: string, note: string, adminId: string) {
-    const { data: order } = await supabase.from('exchange_orders').select('*').eq('id', orderId).single();
-    if (!order) throw new Error('Order not found');
-
-    const normalizedStatus = status.toUpperCase();
-
-    if (normalizedStatus === 'APPROVED') {
-      await supabase.from('exchange_orders').update({ status: 'APPROVED', updated_at: new Date().toISOString() }).eq('id', orderId);
-      await supabase.from('payout_orders').update({ status: 'APPROVED' }).eq('id', orderId);
-    } else if (normalizedStatus === 'SUCCESS') {
-      // Handle success...
+    const s = status.toUpperCase();
+    if (s !== 'SUCCESS' && s !== 'FAILED' && s !== 'REFUNDED') {
+      throw new Error('Orders can only be marked as paid (SUCCESS) or refunded (FAILED/REFUNDED)');
     }
-    // ... rest of the method ...
-    await this.logAction(adminId, 'UPDATE_ORDER_STATUS', 'order', orderId, { status: normalizedStatus, note });
-    return { success: true };
+    const paid = s === 'SUCCESS';
+    if (!note.trim()) throw new Error(paid ? 'Enter the bank reference / UTR of the INR transfer' : 'Enter a reason for the refund');
+    const { rows } = await query(`SELECT complete_exchange_order($1, $2, $3) AS r`, [orderId, paid, note.trim()]);
+    await this.logAction(adminId, paid ? 'ORDER_PAID' : 'ORDER_REFUNDED', 'order', orderId, { note });
+    wsService.sendToUser(rows[0].r.user_id, 'ORDER_UPDATED', { orderId, status: rows[0].r.status });
+    return { success: true, status: rows[0].r.status };
   }
 
   async updateSystemSpread(spreadPercent: number, adminId: string) {
@@ -407,7 +503,7 @@ export class AdminService {
   async getAuditLogs() {
     const { data, error } = await supabase
       .from('audit_logs')
-      .select('*, users(email)')
+      .select('*')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data;

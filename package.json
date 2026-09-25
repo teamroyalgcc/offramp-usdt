@@ -9,7 +9,7 @@
     "build": "tsc",
     "dev": "tsc && node dist/index.js",
     "migrate": "node dist/scripts/migrate.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc && node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.0",
@@ -28,12 +28,12 @@
     "nodemailer": "^8.0.4",
     "pg": "^8.16.3",
     "tronweb": "^6.1.1",
-    "twilio": "^5.12.1",
     "uuid": "^13.0.0",
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -46,5 +46,8 @@
     "@types/ws": "^8.18.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

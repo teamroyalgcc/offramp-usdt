@@ -62,7 +62,7 @@ export class WithdrawalController extends BaseController {
       await withdrawalService.processWithdrawal(id, tx_hash);
       return this.ok(res, { success: true, message: 'Withdrawal processed' });
     } catch (error: any) {
-      return this.fail(res, error.message);
+      return this.clientError(res, error.message);
     }
   }
 
@@ -76,7 +76,7 @@ export class WithdrawalController extends BaseController {
       await withdrawalService.rejectWithdrawal(id, reason);
       return this.ok(res, { success: true, message: 'Withdrawal rejected and funds refunded' });
     } catch (error: any) {
-      return this.fail(res, error.message);
+      return this.clientError(res, error.message);
     }
   }
 }

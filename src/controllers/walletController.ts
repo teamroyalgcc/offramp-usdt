@@ -15,6 +15,15 @@ export class WalletController extends BaseController {
     }
   }
 
+  async listDeposits(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) return this.unauthorized(res);
+      return this.ok(res, await walletService.listDeposits(req.user.id));
+    } catch (error: any) {
+      return this.fail(res, error);
+    }
+  }
+
   async getBalance(req: AuthRequest, res: Response) {
     try {
       console.log(`[WALLET_CONTROLLER] Balance request for user: ${req.user?.id}`);

@@ -94,7 +94,7 @@ export class ComplianceService {
     startOfDay.setHours(0, 0, 0, 0);
 
     const { data, error } = await supabase
-      .from('payout_orders')
+      .from('exchange_orders')
       .select('inr_amount')
       .eq('user_id', userId)
       .gte('created_at', startOfDay.toISOString());

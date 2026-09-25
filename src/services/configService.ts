@@ -5,6 +5,7 @@ export interface SystemConfig {
   usdt_withdrawal_fee: number;
   daily_withdrawal_limit: number;
   exchange_spread_percent: number;
+  min_exchange_usdt: number;
   withdrawals_enabled: boolean;
   deposits_enabled: boolean;
   exchanges_enabled: boolean;
@@ -17,6 +18,7 @@ export class ConfigService {
     usdt_withdrawal_fee: 5.0,
     daily_withdrawal_limit: 100000.0,
     exchange_spread_percent: 1.0,
+    min_exchange_usdt: 50,
     withdrawals_enabled: true,
     deposits_enabled: true,
     exchanges_enabled: true

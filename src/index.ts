@@ -1,30 +1,24 @@
 import express from 'express';
 import { createServer } from 'http';
 import wsService from './services/wsService.js';
-import bscService from './services/bscService.js';
 import cors from 'cors';
 import multer from 'multer';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import config from './config/index.js';
 import generalAuthRouter from './routes/auth.routes.js';
 import walletController from './controllers/walletController.js';
 import exchangeController from './controllers/exchangeController.js';
 import withdrawalController from './controllers/withdrawalController.js';
-import payoutController from './controllers/payoutController.js';
 import adminController from './controllers/adminController.js';
 import referralController from './controllers/referralController.js';
 import { kycController } from './controllers/kycController.js';
 import bankAccountController from './controllers/bankAccountController.js';
-import tronWorker from './workers/tronWorker.js';
-import payoutWorker from './workers/payoutWorker.js';
-import withdrawalWorker from './workers/withdrawalWorker.js';
 import configService from './services/configService.js';
 import { authenticate } from './middleware/authMiddleware.js';
 import { adminAuth } from './middleware/adminAuth.js';
 import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
 import supabase from './utils/supabase.js';
+import gasfreeWorker from './workers/gasfreeWorker.js';
 
 const app = express();
 const server = createServer(app);
@@ -72,6 +66,7 @@ apiRouter.use('/auth', generalAuthRouter);
 const walletRouter = express.Router();
 walletRouter.get('/balance', authenticate, walletController.getBalance.bind(walletController));
 walletRouter.post('/generate-address', authenticate, walletController.generateAddress.bind(walletController));
+walletRouter.get('/deposits', authenticate, walletController.listDeposits.bind(walletController));
 
 apiRouter.use('/wallet', walletRouter);
 
@@ -84,18 +79,14 @@ exchangeRouter.post('/create-order', authenticate, exchangeController.createOrde
 apiRouter.use('/exchange', exchangeRouter);
 
 // Withdrawal Routes (USDT to Wallet)
+// USDT withdrawals are paid by an admin from the treasury wallet by hand, then marked
+// sent with the tx hash (verified on-chain). withdrawalWorker (auto-send from
+// SYSTEM_PRIVATE_KEY) is intentionally not started.
 const withdrawalRouter = express.Router();
 withdrawalRouter.post('/', authenticate, withdrawalController.requestWithdrawal.bind(withdrawalController));
 withdrawalRouter.get('/my', authenticate, withdrawalController.getMyWithdrawals.bind(withdrawalController));
 
 apiRouter.use('/withdrawal', withdrawalRouter);
-
-// Payout Routes (USDT to INR)
-const payoutRouter = express.Router();
-payoutRouter.post('/', authenticate, payoutController.requestPayout.bind(payoutController));
-payoutRouter.get('/my', authenticate, payoutController.getMyPayouts.bind(payoutController));
-
-apiRouter.use('/payout', payoutRouter);
 
 // KYC Routes
 const kycRouter = express.Router();
@@ -133,8 +124,11 @@ adminRouter.get('/kyc', adminAuth, adminController.getKycList.bind(adminControll
 adminRouter.post('/kyc/:id/approve', adminAuth, adminController.approveKyc.bind(adminController));
 adminRouter.post('/kyc/:id/reject', adminAuth, adminController.rejectKyc.bind(adminController));
 adminRouter.get('/deposits', adminAuth, adminController.getDeposits.bind(adminController));
-adminRouter.post('/deposits/:txHash/approve', adminAuth, adminController.approveDeposit.bind(adminController));
-adminRouter.post('/manual-credit', adminAuth, adminController.manualCredit.bind(adminController));
+adminRouter.get('/deposits/health', adminAuth, adminController.getDepositHealth.bind(adminController));
+adminRouter.post('/deposits/audit', adminAuth, adminController.runDepositAudit.bind(adminController));
+adminRouter.post('/deposits/:id/credit', adminAuth, adminController.creditHeldDeposit.bind(adminController));
+adminRouter.post('/sweeps/:id/retry', adminAuth, adminController.retrySweep.bind(adminController));
+adminRouter.post('/deposit-addresses/:id/scan', adminAuth, adminController.scanDepositAddress.bind(adminController));
 adminRouter.get('/orders', adminAuth, adminController.getOrders.bind(adminController));
 adminRouter.post('/orders/:id/status', adminAuth, adminController.updateOrderStatus.bind(adminController));
 adminRouter.get('/users', adminAuth, adminController.getUsers.bind(adminController));
@@ -145,31 +139,12 @@ adminRouter.get('/withdrawals', adminAuth, withdrawalController.adminListAll.bin
 adminRouter.post('/withdrawals/:id/approve', adminAuth, withdrawalController.adminProcess.bind(withdrawalController));
 adminRouter.post('/withdrawals/:id/reject', adminAuth, withdrawalController.adminReject.bind(withdrawalController));
 
-// Admin Payout APIs (USDT to INR)
-adminRouter.get('/payouts', adminAuth, payoutController.adminListAll.bind(payoutController));
-adminRouter.post('/payouts/:id/approve', adminAuth, payoutController.adminProcess.bind(payoutController));
-adminRouter.post('/payouts/:id/reject', adminAuth, payoutController.adminReject.bind(payoutController));
-
 adminRouter.post('/settings/rate', adminAuth, adminController.updateUSDTSpread.bind(adminController));
 adminRouter.get('/audit', adminAuth, adminController.getAuditLogs.bind(adminController));
 
 apiRouter.use('/admin', adminRouter);
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'success', 
-    timestamp: new Date().toISOString(),
-    env: config.nodeEnv
-  });
-});
-
 app.use('/api', apiRouter);
-
-// Static frontend
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-app.use(express.static(path.resolve(__dirname, '../public')));
 
 // Real-time streams (SSE)
 const streamRouter = express.Router();
@@ -234,21 +209,15 @@ streamRouter.get('/orders', authenticate, async (req: any, res) => {
 
 app.use('/api/stream', streamRouter);
 
-// Initialize Workers & Start Server
+// Start Server
 const startServer = async () => {
   try {
     // 0. Load Configuration from DB
     await configService.loadConfig();
     console.log('✅ Configuration loaded from database');
 
-    // 1. Start Persistent Workers (Start by default unless explicitly disabled)
-    if (process.env.SKIP_WORKERS !== 'true') {
-      await tronWorker.start();
-      await bscService.startListening();
-      payoutWorker.start();
-      withdrawalWorker.start();
-      console.log('✅ Background workers started');
-    }
+    // 1. Background workers run in this same process (one instance only; see gasfreeWorker.ts).
+    await gasfreeWorker.start();
 
     // 2. Start Express Server
     server.listen(config.port, '0.0.0.0', () => {

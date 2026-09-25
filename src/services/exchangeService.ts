@@ -53,6 +53,11 @@ export class ExchangeService {
         throw new Error('Exchanges are paused');
       }
 
+      const minUsdt = Number(configService.get('min_exchange_usdt') || 0);
+      if (usdtAmount < minUsdt) {
+        throw new Error(`Minimum exchange amount is ${minUsdt} USDT`);
+      }
+
       const rate = await this.getLiveRate();
       const inrAmount = Number((usdtAmount * rate).toFixed(2));
       

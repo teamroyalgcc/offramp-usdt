@@ -5,6 +5,10 @@ import supabase from '../utils/supabase.js';
 import { sendOTPEmail } from '../utils/email.js';
 import { auditService } from '../services/auditService.js';
 
+// ponytail: in-memory, single instance. Move to the DB if the API ever runs more than one instance.
+const otpFailures = new Map<string, number>();
+const MAX_OTP_FAILURES = 5;
+
 export class AuthController {
   
   // Basic email pattern validation
@@ -184,8 +188,17 @@ export class AuthController {
         .maybeSingle();
 
       if (error || !user) {
+        const failures = (otpFailures.get(normalizedEmail) ?? 0) + 1;
+        otpFailures.set(normalizedEmail, failures);
+        if (failures >= MAX_OTP_FAILURES) {
+          // Too many wrong guesses: burn the code so it cannot be brute-forced.
+          otpFailures.delete(normalizedEmail);
+          await supabase.from('users').update({ email_otp: null, email_otp_expires: null }).eq('email', normalizedEmail);
+          return res.status(429).json({ error: 'Too many wrong codes. Please request a new code.' });
+        }
         return res.status(401).json({ error: 'The code provided is incorrect.' });
       }
+      otpFailures.delete(normalizedEmail);
 
       // Check expiry
       if (new Date() > new Date(user.email_otp_expires)) {

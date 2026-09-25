@@ -22,22 +22,45 @@ const transporter = nodemailer.createTransport({
     rejectUnauthorized: false,
     minVersion: 'TLSv1.2'
   },
-  // CRITICAL: Always enable logs for now to diagnose production
-  debug: true,
-  logger: true
 } as any);
+
+const FROM_NAME = 'Royal GCC Support';
+
+/**
+ * Sends through Brevo's HTTPS API when BREVO_API_KEY is set (Render's free tier
+ * blocks outbound SMTP ports), otherwise through SMTP.
+ */
+export const sendEmail = async (to: string, subject: string, text: string, html?: string) => {
+  const sender = process.env.EMAIL_FROM || process.env.SMTP_USER;
+  if (process.env.BREVO_API_KEY) {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: { name: FROM_NAME, email: sender },
+        to: [{ email: to }],
+        subject,
+        textContent: text,
+        ...(html ? { htmlContent: html } : {}),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`Brevo HTTP ${res.status}: ${await res.text()}`);
+    return;
+  }
+  await transporter.sendMail({ from: `"${FROM_NAME}" <${sender}>`, to, subject, text, html });
+};
 
 /**
  * Sends a 6-digit numeric OTP to the user for authentication.
  * Tailored with a premium purple theme as per user requirement.
  */
 export const sendOTPEmail = async (to: string, otp: string) => {
-  const mailOptions = {
-    from: `"Royal GCC Support" <${process.env.SMTP_USER}>`,
+  await sendEmail(
     to,
-    subject: `Your OTP Code: ${otp}`,
-    text: `Your Royal GCC verification code is: ${otp}. It will expire in 10 minutes.`,
-    html: `
+    `Your OTP Code: ${otp}`,
+    `Your Royal GCC verification code is: ${otp}. It will expire in 10 minutes.`,
+    `
       <div style="background-color: #F9FAFB; padding: 40px 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
         <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
           
@@ -70,7 +93,5 @@ export const sendOTPEmail = async (to: string, otp: string) => {
         </div>
       </div>
     `,
-  };
-
-  await transporter.sendMail(mailOptions);
+  );
 };

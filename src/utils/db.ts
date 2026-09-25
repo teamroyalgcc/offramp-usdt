@@ -5,14 +5,15 @@ const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: config.databaseUrl,
-  max: 20, // Maximum number of connections in the pool
+  ssl: config.databaseUrl.includes('localhost') ? undefined : { rejectUnauthorized: false },
+  max: 5, // Supabase free-tier poolers allow few connections
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
 });
 
+// The pooler drops idle connections now and then; the pool replaces them. Do not exit.
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  console.error('[DB] idle client error:', err.message);
 });
 
 export const query = (text: string, params?: any[]) => {

@@ -17,12 +17,6 @@ const updateRateSchema = z.object({
   spreadPercent: z.number().min(-100).max(100),
 });
 
-const manualCreditSchema = z.object({
-  userId: z.string(),
-  amount: z.number(),
-  txHash: z.string(),
-});
-
 const freezeSchema = z.object({
   frozen: z.boolean(),
 });
@@ -182,25 +176,45 @@ export class AdminController extends BaseController {
     }
   }
 
-  async approveDeposit(req: AdminRequest, res: Response) {
+  async getDepositHealth(req: AdminRequest, res: Response) {
     try {
-      if (!req.admin) return this.unauthorized(res);
-      const txHash = req.params.txHash as string;
-      const result = await adminService.approveDeposit(txHash, req.admin.id);
-      return this.ok(res, result);
+      return this.ok(res, await adminService.getDepositHealth());
     } catch (error: any) {
       return this.fail(res, error);
     }
   }
 
-  async manualCredit(req: AdminRequest, res: Response) {
+  async retrySweep(req: AdminRequest, res: Response) {
     try {
       if (!req.admin) return this.unauthorized(res);
-      const parsed = manualCreditSchema.safeParse(req.body);
-      if (!parsed.success) return this.clientError(res, parsed.error.issues[0].message);
-      const { userId, amount, txHash } = parsed.data;
-      const result = await adminService.manualCredit(userId, amount, txHash, req.admin.id);
-      return this.ok(res, result);
+      return this.ok(res, await adminService.retrySweep(req.params.id as string, req.admin.id));
+    } catch (error: any) {
+      return this.clientError(res, error.message);
+    }
+  }
+
+  async creditHeldDeposit(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      return this.ok(res, await adminService.creditHeldDeposit(req.params.id as string, req.admin.id));
+    } catch (error: any) {
+      return this.clientError(res, error.message);
+    }
+  }
+
+  async scanDepositAddress(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      return this.ok(res, await adminService.scanDepositAddress(req.params.id as string, req.admin.id));
+    } catch (error: any) {
+      return this.clientError(res, error.message);
+    }
+  }
+
+  async runDepositAudit(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      return this.ok(res, await adminService.runDepositAudit(req.admin.id));
     } catch (error: any) {
       return this.fail(res, error);
     }
@@ -225,7 +239,7 @@ export class AdminController extends BaseController {
       const result = await adminService.updateOrderStatus(id, status, note || '', req.admin.id);
       return this.ok(res, result);
     } catch (error: any) {
-      return this.fail(res, error);
+      return this.clientError(res, error.message);
     }
   }
 
