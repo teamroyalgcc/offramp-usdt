@@ -100,7 +100,7 @@ export class WalletService {
     }
 
     // Live quote: what the next deposit to this address will be charged.
-    const fee = await gasfreeWorker.depositFeeRaw(row!.id, row!.eoa_address);
+    const fee = await gasfreeWorker.depositFeeRaw(row!.eoa_address);
     const minNet = parseUsdt(config.gasfree.minNetUsdt);
     return {
       depositAddressId: row!.id,

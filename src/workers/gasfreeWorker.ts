@@ -50,11 +50,9 @@ export class GasFreeWorker {
   private maxFeeRaw = parseUsdt(config.gasfree.maxFeeUsdt);
 
   /** Live processing fee for the next deposit to this address. Falls back to the fixed fee if GasFree is unreachable. */
-  async depositFeeRaw(depositAddressId: string, eoa: string): Promise<bigint> {
+  async depositFeeRaw(eoa: string): Promise<bigint> {
     try {
-      const acct = await this.gasfree.getAccount(eoa, USDT);
-      const { rows } = await query(`SELECT 1 FROM deposits WHERE deposit_address_id = $1 AND status = 'credited' LIMIT 1`, [depositAddressId]);
-      return depositFee(acct, rows.length === 0, this.marginRaw);
+      return depositFee(await this.gasfree.getAccount(eoa, USDT), this.marginRaw);
     } catch (e: any) {
       log('live fee quote failed, using fixed fee', { error: e.message });
       return this.feeRaw;
@@ -179,7 +177,7 @@ export class GasFreeWorker {
   }
 
   private async record(depositAddressId: string, eoa: string, t: Awaited<ReturnType<TronChain['solidTransfersTo']>>[number]) {
-    const feeRaw = await this.depositFeeRaw(depositAddressId, eoa);
+    const feeRaw = await this.depositFeeRaw(eoa);
     const { rows } = await query(
       `SELECT record_deposit($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) AS r`,
       [`tron_${NETWORK}`, depositAddressId, t.txId, t.logIndex, t.from, t.amountRaw.toString(),

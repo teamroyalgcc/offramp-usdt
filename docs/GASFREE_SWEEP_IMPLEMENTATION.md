@@ -102,13 +102,13 @@ Revisit KMS or a separate signing service when deposits in flight regularly exce
 
 GasFree charges per transfer, in USDT, taken from the swept amount. There is also a one-time activation fee the first time an address is swept. Since each user keeps one address, each user pays activation only once.
 
-Real numbers seen in 2026 wallets range from about **1 to 1.5 USDT per transfer**, plus **about 1 to 1.5 USDT once for activation**. When GasFree launched in early 2025, the activation and transfer fees were each about 10 USDT, which is why the hard cap exists. Prices vary by provider and change over time. The worker logs the live quote at startup (`activateFee`, `transferFee` in the `started` log line), and every sweep stores the real fee charged in `sweeps.actual_fee_raw`.
+Live mainnet quote (GasFree API, September 2026): **1.5 USDT per transfer**, plus **1.5 USDT once for activation** of each new address, so a first sweep costs 3.0. When GasFree launched in early 2025, the activation and transfer fees were each about 10 USDT, which is why the hard cap exists. Prices vary by provider and change over time. The worker logs the live quote at startup (`activateFee`, `transferFee` in the `started` log line), and every sweep stores the real fee charged in `sweeps.actual_fee_raw`.
 
 Settings:
 
-- **Processing fee (live).** Each deposit is charged GasFree's live `transferFee` for that address, plus `activateFee` on the address's first credited deposit (the first sweep pays activation), plus **`DEPOSIT_FEE_MARGIN_USDT`** (default 0.5). The Deposit screen shows the same live quote before the user sends. It is quoted when the deposit is credited; the margin absorbs small moves before the sweep. Two deposits before one sweep each pay a transfer fee, and the platform keeps the difference.
+- **Processing fee (live).** Each deposit is charged GasFree's live `transferFee` plus **`DEPOSIT_FEE_MARGIN_USDT`** (default 0, so users pay exactly GasFree's fee). The Deposit screen shows the same live quote before the user sends. **The platform absorbs the one-time `activateFee`** (1.5 USDT per depositing user), so every deposit costs the user the same; the 1% exchange spread recovers it after about 150 USDT sold. Two deposits before one sweep each pay a transfer fee, and the platform keeps the difference, which also offsets activation.
 - **`DEPOSIT_PROCESSING_FEE_USDT`** (default 1.5). Fallback only: used when the GasFree API cannot be reached at credit time, so deposits are never blocked.
-- **`GASFREE_MAX_FEE_USDT`** (default 3). This is a safety cap per sweep. If GasFree asks for more, nothing moves and the admin sees "fee above your safety limit".
+- **`GASFREE_MAX_FEE_USDT`** (default 5; a first sweep costs 3.0). This is a safety cap per sweep. If GasFree asks for more, nothing moves and the admin sees "fee above your safety limit".
 - **`DEPOSIT_MIN_NET_USDT`** (default 10). Deposits worth less than this after the fee are held for review.
 
 ## 7. Decisions taken for launch

@@ -69,10 +69,10 @@ A technical person changes these in Render → the service → Environment. The 
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `DEPOSIT_FEE_MARGIN_USDT` | 0.5 | Added to GasFree's live fee on each deposit. The user pays live fee plus this. |
+| `DEPOSIT_FEE_MARGIN_USDT` | 0 | Added to GasFree's live transfer fee on each deposit. At 0, users pay exactly GasFree's fee (1.5 USDT in Sep 2026). |
 | `DEPOSIT_PROCESSING_FEE_USDT` | 1.5 | Fallback fee, used only if GasFree cannot be reached. |
 | `DEPOSIT_MIN_NET_USDT` | 10 | Deposits worth less than this after the fee wait for your approval. |
-| `GASFREE_MAX_FEE_USDT` | 3 | The system refuses to pay more than this per transfer to treasury. |
+| `GASFREE_MAX_FEE_USDT` | 5 | The system refuses to pay more than this per transfer to treasury. |
 | `ALERT_EMAIL` | none | Where the daily problem email goes. |
 
 The exchange rate spread is changed in the admin panel under **Rates**. The minimum sell amount, withdrawal minimum, withdrawal fee, daily limits and the on/off switches for deposits, sell orders and withdrawals are in the `system_settings` table (Supabase → Table Editor). The backend reads them when it starts, so restart it after changing them.

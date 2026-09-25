@@ -65,10 +65,8 @@ test('GasFree auth header signs METHOD + prefixed path + timestamp', () => {
   assert.deepEqual(h, { Timestamp: '1731912286', Authorization: `ApiKey key:${expected}` });
 });
 
-test('deposit fee = live GasFree fee + margin, activation only on the first deposit', async () => {
+test('deposit fee = live GasFree transfer fee + margin; activation absorbed by the platform', async () => {
   const { depositFee } = await import('./gasfree.js');
-  const acct = { active: false, activateFee: 1_000_000n, transferFee: 1_200_000n };
-  assert.equal(depositFee(acct, true, 500_000n), 2_700_000n);                     // first deposit, new address
-  assert.equal(depositFee(acct, false, 500_000n), 1_700_000n);                    // second deposit before first sweep
-  assert.equal(depositFee({ ...acct, active: true }, true, 500_000n), 1_700_000n); // already activated
+  assert.equal(depositFee({ transferFee: 1_500_000n }, 0n), 1_500_000n);       // live mainnet, Sep 2026
+  assert.equal(depositFee({ transferFee: 1_500_000n }, 200_000n), 1_700_000n);
 });

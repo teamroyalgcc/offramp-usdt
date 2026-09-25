@@ -24,8 +24,8 @@ const configSchema = z.object({
   GASFREE_PROVIDER_ADDRESS: z.string().optional(),
   DEPOSIT_MIN_NET_USDT: z.string().default('10'),
   DEPOSIT_PROCESSING_FEE_USDT: z.string().default('1.5'), // fallback only, used when GasFree cannot quote a live fee
-  DEPOSIT_FEE_MARGIN_USDT: z.string().default('0.5'),     // added on top of the live GasFree fee
-  GASFREE_MAX_FEE_USDT: z.string().default('3'),
+  DEPOSIT_FEE_MARGIN_USDT: z.string().default('0'),       // added on top of the live GasFree fee
+  GASFREE_MAX_FEE_USDT: z.string().default('5'),
   ALERT_EMAIL: z.string().optional(),
   DATABASE_URL: z.string().optional(),
 });
