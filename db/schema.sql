@@ -112,7 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_bank_accounts_user ON public.bank_accounts (user_
 CREATE TABLE IF NOT EXISTS public.system_settings (
   id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   exchange_spread_percent NUMERIC NOT NULL DEFAULT 1.0,
-  min_exchange_usdt NUMERIC NOT NULL DEFAULT 50,
+  min_exchange_usdt NUMERIC NOT NULL DEFAULT 10,
   min_usdt_withdrawal NUMERIC NOT NULL DEFAULT 20,
   usdt_withdrawal_fee NUMERIC NOT NULL DEFAULT 5,
   daily_exchange_usdt NUMERIC NOT NULL DEFAULT 10000,

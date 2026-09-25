@@ -44,7 +44,7 @@ The funds at a deposit address can only leave through a GasFree permit signed by
 
 ### Sell order (USDT to INR)
 
-1. The user places an order of at least `min_exchange_usdt` (default 50, in `system_settings`). `create_exchange_order` moves the USDT from available to locked, and the order is `PROCESSING`.
+1. The user places an order of at least `min_exchange_usdt` (default 10, in `system_settings`). `create_exchange_order` moves the USDT from available to locked, and the order is `PROCESSING`.
 2. The admin pays the INR to the user's bank account by hand.
 3. The admin opens the order and marks it **Paid**, entering the UTR. `complete_exchange_order` then spends the locked USDT. Alternatively, the admin chooses **Refund**, which moves the USDT back to available. Each order can complete only once.
 
