@@ -44,7 +44,7 @@ The funds at a deposit address can only leave through a GasFree permit signed by
 
 ### Sell order (USDT to INR)
 
-1. The user places an order. `create_exchange_order` moves the USDT from available to locked, and the order is `PROCESSING`.
+1. The user places an order of at least `min_exchange_usdt` (default 50, in `system_settings`). `create_exchange_order` moves the USDT from available to locked, and the order is `PROCESSING`.
 2. The admin pays the INR to the user's bank account by hand.
 3. The admin opens the order and marks it **Paid**, entering the UTR. `complete_exchange_order` then spends the locked USDT. Alternatively, the admin chooses **Refund**, which moves the USDT back to available. Each order can complete only once.
 
@@ -54,7 +54,7 @@ The funds at a deposit address can only leave through a GasFree permit signed by
 2. The admin sends that USDT from the treasury wallet (for example TronLink) and pastes the transaction hash into the admin panel.
 3. The backend accepts the hash only if the transaction is final and pays exactly the right amount to the user's address, and only if the hash has not been used before. **Reject** refunds the user.
 
-The backend never holds the treasury key. The old auto-send worker (`withdrawalWorker`, using `SYSTEM_PRIVATE_KEY`) is no longer started.
+The backend never holds the treasury key. The old auto-send worker (`withdrawalWorker`, using `SYSTEM_PRIVATE_KEY`) has been deleted.
 
 ## 4. Keys: what exists and who holds it
 
@@ -79,8 +79,9 @@ Revisit KMS or a separate signing service when deposits in flight regularly exce
 **"Once the sweep is done, is a hack almost impossible?"** For the treasury itself, yes, as long as its seed stays offline. The realistic risk moves to the **payout side**. Someone with an admin password, the service-role key or `JWT_SECRET` could fake balances or orders, and an admin could then pay INR or send USDT for them. So:
 
 - Protect those three secrets.
-- Change the default admin password on day one.
+- Give each admin their own login and a strong password. There is no default admin; the first one is created by SQL with the owner's own password.
 - Before paying an order, check that the user's deposit is visible in the admin panel's deposit list.
+- Use **Freeze** in the admin panel for any suspicious account. A frozen or banned user is refused on every app request.
 
 ## 5. Monitoring for a non-technical admin
 
@@ -137,3 +138,5 @@ Settings:
 
 - **Run exactly one backend instance.** A second one would not double-spend, but it would waste TronGrid quota. The OTP attempt counter is also in memory.
 - **A crash between two Transfer logs of the same multi-transfer transaction** would skip the second log until the daily audit flags it. "Check again" then records it.
+- **Not built yet, planned before launch:** a Transaction PIN for sell orders and withdrawals, and a Statement of balance changes in the app. The plan is in `work/CLAUDE.md`.
+- **After launch:** invite code / team commissions (the rules are not defined yet) and splitting a payout across banks.
