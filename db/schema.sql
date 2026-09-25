@@ -496,6 +496,18 @@ BEGIN
   END LOOP;
 END $$;
 
+-- The backend (service_role) gets explicit access, so this works even when the project
+-- was created with "Automatically expose new tables" turned off. anon/authenticated get nothing.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT USAGE ON SCHEMA public TO service_role;
+    GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+    GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+  END IF;
+END $$;
+
 -- Only the backend may call the money functions.
 DO $$
 DECLARE f TEXT;

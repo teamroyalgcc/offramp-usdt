@@ -50,7 +50,12 @@ You need two different wallets. Never reuse one for the other.
 
 One Supabase project serves everything. Only the backend talks to it; the app and admin panel talk to the backend.
 
-1. In Supabase, create a new project `royalgcc-prod`, region **Southeast Asia (Singapore)**. Save the database password in the password manager.
+1. In Supabase, create a new project `offramp-usdt-prod`, region **Southeast Asia (Singapore)**. Save the database password in the password manager before clicking Create. Security settings:
+   - **Enable Data API:** on (the backend uses it).
+   - **Automatically expose new tables:** off.
+   - **Enable automatic RLS:** on.
+
+   The schema grants the backend's role access explicitly, so turning off auto-expose is safe.
 2. **Create the schema.** Open SQL Editor → New query → paste the whole of `db/schema.sql` → **Run**. It is safe to run again. It creates:
    - all tables, with row-level security on;
    - the settings row;
