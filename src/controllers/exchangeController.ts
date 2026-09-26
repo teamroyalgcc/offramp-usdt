@@ -18,8 +18,7 @@ const createOrderSchema = z.object({
 export class ExchangeController extends BaseController {
   async getRate(req: AuthRequest, res: Response) {
     try {
-      const rate = await exchangeService.getLiveRate();
-      return this.ok(res, { rate });
+      return this.ok(res, await exchangeService.getRateInfo());
     } catch (error: any) {
       return this.fail(res, error);
     }

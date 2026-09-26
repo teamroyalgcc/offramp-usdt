@@ -10,7 +10,7 @@ import tronService from './tronService.js';
 import configService from './configService.js';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../utils/db.js';
-import gasfreeWorker from '../workers/gasfreeWorker.js';
+import depositWorker from '../workers/depositWorker.js';
 import { formatUsdt } from '../tron/usdt.js';
 import wsService from './wsService.js';
 
@@ -19,22 +19,22 @@ const usdt = (raw: unknown) => (raw == null ? null : formatUsdt(BigInt(String(ra
 /** Plain-language explanation and allowed action for a failed transfer to treasury. */
 function explainFailedSweep(lastError: string | null) {
   const e = lastError ?? '';
-  if (e.startsWith('fee_cap')) {
+  if (e.startsWith('cost_cap')) {
     return {
-      explanation: `GasFree asked for a fee of ${usdt(e.split(':')[1]) ?? '?'} USDT, which is above your safety limit (GASFREE_MAX_FEE_USDT = ${config.gasfree.maxFeeUsdt}). The money is safe in the deposit address. Raise the limit on the server, or wait for fees to drop, then click Retry.`,
+      explanation: `Moving this deposit would cost ${e.split(':')[1]} TRX, above your safety limit (SWEEP_MAX_COST_TRX = ${config.sweep.maxCostTrx}). The money is safe in the deposit address. Check that the Netts balance is topped up, or raise the limit on the server, then click Retry.`,
       canRetry: true,
     };
   }
-  if (e === 'address_mismatch') {
-    return { explanation: 'GasFree reported a different address than ours. Do NOT retry. Contact the developer.', canRetry: false };
-  }
-  if (e === 'ambiguous_submit_nonce_consumed') {
+  if (e.startsWith('no_energy')) {
     return {
-      explanation: 'GasFree may already have moved these funds, but we could not confirm it. Check the treasury wallet on tronscan.org first. Contact the developer before retrying.',
-      canRetry: false,
+      explanation: `Could not get energy to move this deposit (${e.slice(10, 200)}). Top up the Netts balance and the operating wallet (TRX), then click Retry. The money is safe in the deposit address.`,
+      canRetry: true,
     };
   }
-  return { explanation: `GasFree did not complete the transfer after several tries (${e || 'unknown reason'}). The money is safe in the deposit address. Click Retry.`, canRetry: true };
+  if (e === 'unexpected_receipt') {
+    return { explanation: 'The transfer went through but did not match what we expected. Do NOT retry. Contact the developer.', canRetry: false };
+  }
+  return { explanation: `The transfer did not complete after several tries (${e || 'unknown reason'}). The money is safe in the deposit address. Click Retry.`, canRetry: true };
 }
 
 export class AdminService {
@@ -300,7 +300,7 @@ export class AdminService {
   /** Recent USDT deposits with user and treasury-transfer status. */
   async getDeposits() {
     const { rows } = await query(
-      `SELECT d.id, d.tx_id, d.amount_raw, d.fee_raw, d.status, d.block_ts, d.from_address,
+      `SELECT d.id, d.tx_id, d.amount_raw, d.status, d.block_ts, d.from_address,
               d.user_id, u.email, u.account_holder_name, a.tron_address, a.id AS deposit_address_id,
               CASE
                 WHEN d.status = 'review' THEN 'on_hold'
@@ -322,7 +322,6 @@ export class AdminService {
       fromAddress: r.from_address,
       depositAddress: r.tron_address,
       amount: usdt(r.amount_raw),
-      processingFee: r.status === 'credited' ? usdt(r.fee_raw) : '0',
       status: r.status === 'credited' ? 'credited' : 'on_hold',
       treasuryTransfer: r.treasury_transfer,
       receivedAt: r.block_ts,
@@ -338,11 +337,12 @@ export class AdminService {
       query(`SELECT s.id, s.last_error, s.updated_at, a.tron_address, a.user_id, u.email
                FROM sweeps s JOIN deposit_addresses a ON a.id = s.deposit_address_id LEFT JOIN users u ON u.id = a.user_id
               WHERE s.status = 'failed' ORDER BY s.updated_at DESC`),
-      query(`SELECT d.id, d.amount_raw, d.fee_raw, d.block_ts, d.user_id, u.email
+      query(`SELECT d.id, d.amount_raw, d.block_ts, d.user_id, u.email
                FROM deposits d LEFT JOIN users u ON u.id = d.user_id
               WHERE d.status = 'review' ORDER BY d.created_at`),
+      // Small balances wait up to 24 h on purpose, so only flag sweeps past that.
       query(`SELECT s.id, s.created_at, a.tron_address FROM sweeps s JOIN deposit_addresses a ON a.id = s.deposit_address_id
-              WHERE s.status IN ('pending', 'submitted') AND s.created_at < NOW() - interval '30 minutes'`),
+              WHERE s.status IN ('pending', 'submitted') AND s.created_at < NOW() - interval '25 hours'`),
       query(`SELECT created_at, addresses_checked, issues FROM audit_reports ORDER BY created_at DESC LIMIT 1`),
     ]);
 
@@ -356,12 +356,10 @@ export class AdminService {
       });
     }
     for (const d of held.rows) {
-      const amount = BigInt(String(d.amount_raw));
-      const fee = BigInt(String(d.fee_raw));
       items.push({
         id: d.id, severity: 'medium', title: 'Deposit below minimum (not credited yet)',
-        explanation: `The user sent ${usdt(amount)} USDT, below the minimum of ${formatUsdt(BigInt(Math.round(Number(config.gasfree.minNetUsdt) * 1e6)) + fee)} USDT. ` +
-          `Click "Credit anyway" to add ${usdt(amount > fee ? amount - fee : 0n)} USDT to their balance (processing fee deducted), or contact the user first.`,
+        explanation: `The user sent ${usdt(d.amount_raw)} USDT, below the minimum of ${config.sweep.minDepositUsdt} USDT. ` +
+          `Click "Credit anyway" to add it to their balance, or contact the user first.`,
         user: d.email, at: d.block_ts,
         action: { label: 'Credit anyway', method: 'POST', path: `/api/admin/deposits/${d.id}/credit` },
       });
@@ -424,15 +422,15 @@ export class AdminService {
 
   /** Rescans one address, then re-runs the balance check so the list reflects the result. */
   async scanDepositAddress(depositAddressId: string, adminId: string) {
-    const scan = await gasfreeWorker.scanNow(depositAddressId);
+    const scan = await depositWorker.scanNow(depositAddressId);
     // ponytail: re-checks every address; fine for hundreds, scope to one address if it gets slow.
-    await gasfreeWorker.runAudit('manual');
+    await depositWorker.runAudit('manual');
     await this.logAction(adminId, 'DEPOSIT_ADDRESS_SCAN', 'deposit_address', depositAddressId, scan);
     return scan;
   }
 
   async runDepositAudit(adminId: string) {
-    const result = await gasfreeWorker.runAudit('manual');
+    const result = await depositWorker.runAudit('manual');
     await this.logAction(adminId, 'DEPOSIT_AUDIT_RUN', 'audit_reports', 'manual', { issues: result.issues.length });
     return result;
   }

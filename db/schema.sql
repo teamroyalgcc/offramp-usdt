@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS public.system_settings (
   deposits_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   exchanges_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   withdrawals_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  pinned_treasury_address TEXT, -- set by the deposit worker on first start; it refuses to start if TREASURY_ADDRESS differs
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO public.system_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
@@ -140,7 +141,7 @@ CREATE TABLE IF NOT EXISTS public.ledger_accounts (
 CREATE TABLE IF NOT EXISTS public.ledger_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.users(id),
-  type TEXT NOT NULL,           -- deposit, deposit_fee, exchange_lock, exchange_settle, exchange_refund, withdrawal_lock, withdrawal_settle, withdrawal_refund
+  type TEXT NOT NULL,           -- deposit, exchange_lock, exchange_settle, exchange_refund, withdrawal_lock, withdrawal_settle, withdrawal_refund
   amount NUMERIC(20, 6) NOT NULL,
   balance_type TEXT NOT NULL,   -- available | locked
   direction TEXT NOT NULL,      -- credit | debit
@@ -310,8 +311,9 @@ BEGIN
 END;
 $$;
 
--- ============================================================ USDT deposits (GasFree)
--- One permanent HD-derived GasFree address per user. See docs/GASFREE_SWEEP_IMPLEMENTATION.md.
+-- ============================================================ USDT deposits
+-- One permanent HD-derived address per user; swept to the treasury with rented energy.
+-- See docs/GASFREE_SWEEP_IMPLEMENTATION.md.
 
 CREATE SEQUENCE IF NOT EXISTS public.deposit_derivation_index_seq START 0 MINVALUE 0;
 
@@ -322,9 +324,8 @@ CREATE TABLE IF NOT EXISTS public.deposit_addresses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.users(id),
   network TEXT NOT NULL DEFAULT 'tron',
-  method TEXT NOT NULL DEFAULT 'gasfree',
-  tron_address TEXT NOT NULL UNIQUE,   -- the GasFree address users send to
-  eoa_address TEXT NOT NULL UNIQUE,    -- the HD key that signs sweeps
+  tron_address TEXT NOT NULL UNIQUE,   -- the address users send to
+  eoa_address TEXT NOT NULL UNIQUE,    -- the HD key that signs sweeps (same address)
   derivation_index BIGINT NOT NULL UNIQUE,
   is_used BOOLEAN NOT NULL DEFAULT TRUE,
   hot_until TIMESTAMPTZ,               -- watch window end (user opened the deposit screen)
@@ -332,10 +333,10 @@ CREATE TABLE IF NOT EXISTS public.deposit_addresses (
   last_polled_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_deposit_addresses_user_gasfree
-  ON public.deposit_addresses (user_id, network) WHERE method = 'gasfree';
-CREATE INDEX IF NOT EXISTS idx_deposit_addresses_poll_due
-  ON public.deposit_addresses (next_poll_at) WHERE method = 'gasfree';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_deposit_addresses_user_network
+  ON public.deposit_addresses (user_id, network);
+CREATE INDEX IF NOT EXISTS idx_deposit_addresses_next_poll
+  ON public.deposit_addresses (next_poll_at);
 
 CREATE TABLE IF NOT EXISTS public.deposits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -346,7 +347,6 @@ CREATE TABLE IF NOT EXISTS public.deposits (
   log_index INT NOT NULL,
   from_address TEXT NOT NULL,
   amount_raw NUMERIC(38, 0) NOT NULL CHECK (amount_raw > 0),
-  fee_raw NUMERIC(38, 0) NOT NULL DEFAULT 0,
   block_number BIGINT NOT NULL,
   block_ts TIMESTAMPTZ NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('credited', 'review')),
@@ -356,17 +356,17 @@ CREATE TABLE IF NOT EXISTS public.deposits (
 CREATE INDEX IF NOT EXISTS idx_deposits_user ON public.deposits (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deposits_review ON public.deposits (created_at) WHERE status = 'review';
 
--- At most one open sweep per address.
+-- At most one open sweep per address. pending: waiting to be due / renting energy;
+-- submitted: signed transfer broadcast (tx_id saved first); confirmed; failed (needs a human).
 CREATE TABLE IF NOT EXISTS public.sweeps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   deposit_address_id UUID NOT NULL REFERENCES public.deposit_addresses(id),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'submitted', 'confirmed', 'failed')),
   amount_raw NUMERIC(38, 0),
-  max_fee_raw NUMERIC(38, 0),
-  actual_fee_raw NUMERIC(38, 0),
-  nonce BIGINT,
-  deadline BIGINT,
-  trace_id TEXT,
+  provider TEXT,                           -- netts | burn (last energy source used)
+  order_id TEXT,                           -- Netts order id
+  cost_trx NUMERIC(20, 6) NOT NULL DEFAULT 0, -- total TRX spent on energy for this sweep
+  rented_at TIMESTAMPTZ,
   tx_id TEXT,
   attempts INT NOT NULL DEFAULT 0,
   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -382,7 +382,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_sweeps_one_open
 CREATE INDEX IF NOT EXISTS idx_sweeps_actionable
   ON public.sweeps (next_attempt_at) WHERE status IN ('pending', 'submitted');
 
--- Daily balance audit results (gasfreeWorker.runAudit).
+-- Daily balance audit results (depositWorker.runAudit).
 CREATE TABLE IF NOT EXISTS public.audit_reports (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   trigger TEXT NOT NULL,
@@ -391,98 +391,82 @@ CREATE TABLE IF NOT EXISTS public.audit_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Atomic: record event -> credit gross -> debit processing fee -> open sweep.
--- Below-minimum deposits are recorded as 'review' and not credited.
+-- Atomic: record event -> credit the full amount -> open a sweep (or wake the open one,
+-- so it re-checks the immediate-sweep threshold). No deposit fee: sweep costs are
+-- covered by the sell spread. Below-minimum deposits are recorded as 'review' and not credited.
 CREATE OR REPLACE FUNCTION public.record_deposit(
   p_network TEXT, p_deposit_address_id UUID, p_tx_id TEXT, p_log_index INT, p_from TEXT,
-  p_amount_raw NUMERIC, p_block_number BIGINT, p_block_ts TIMESTAMPTZ, p_min_net_raw NUMERIC, p_fee_raw NUMERIC
+  p_amount_raw NUMERIC, p_block_number BIGINT, p_block_ts TIMESTAMPTZ, p_min_raw NUMERIC
 ) RETURNS JSONB LANGUAGE plpgsql AS $$
 DECLARE
   v_user UUID;
   v_id UUID;
-  v_gross NUMERIC := p_amount_raw / 1000000;
-  v_fee NUMERIC := p_fee_raw / 1000000;
+  v_amount NUMERIC := p_amount_raw / 1000000;
   v_before NUMERIC;
-  v_ref TEXT := p_tx_id || ':' || p_log_index;
 BEGIN
   SELECT user_id INTO STRICT v_user FROM public.deposit_addresses WHERE id = p_deposit_address_id;
 
   INSERT INTO public.deposits (network, deposit_address_id, user_id, tx_id, log_index, from_address,
-                               amount_raw, fee_raw, block_number, block_ts, status)
+                               amount_raw, block_number, block_ts, status)
   VALUES (p_network, p_deposit_address_id, v_user, p_tx_id, p_log_index, p_from,
-          p_amount_raw, p_fee_raw, p_block_number, p_block_ts,
-          CASE WHEN p_amount_raw - p_fee_raw >= p_min_net_raw THEN 'credited' ELSE 'review' END)
+          p_amount_raw, p_block_number, p_block_ts,
+          CASE WHEN p_amount_raw >= p_min_raw THEN 'credited' ELSE 'review' END)
   ON CONFLICT (network, tx_id, log_index) DO NOTHING
   RETURNING id INTO v_id;
 
   IF v_id IS NULL THEN
     RETURN jsonb_build_object('inserted', false);
   END IF;
-  IF p_amount_raw - p_fee_raw < p_min_net_raw THEN
+  IF p_amount_raw < p_min_raw THEN
     RETURN jsonb_build_object('inserted', true, 'deposit_id', v_id, 'status', 'review', 'user_id', v_user);
   END IF;
 
   INSERT INTO public.ledger_accounts (user_id) VALUES (v_user) ON CONFLICT (user_id) DO NOTHING;
   SELECT available_balance INTO v_before FROM public.ledger_accounts WHERE user_id = v_user FOR UPDATE;
-
   INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id,
                                      description, balance_before, balance_after)
-  VALUES (v_user, 'deposit', v_gross, 'available', 'credit', v_ref,
-          'USDT-TRC20 deposit ' || p_tx_id, v_before, v_before + v_gross);
-  IF v_fee > 0 THEN
-    INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id,
-                                       description, balance_before, balance_after)
-    VALUES (v_user, 'deposit_fee', v_fee, 'available', 'debit', v_ref,
-            'Processing fee for deposit ' || p_tx_id, v_before + v_gross, v_before + v_gross - v_fee);
-  END IF;
-  UPDATE public.ledger_accounts SET available_balance = v_before + v_gross - v_fee, updated_at = NOW()
+  VALUES (v_user, 'deposit', v_amount, 'available', 'credit', p_tx_id || ':' || p_log_index,
+          'USDT-TRC20 deposit ' || p_tx_id, v_before, v_before + v_amount);
+  UPDATE public.ledger_accounts SET available_balance = v_before + v_amount, updated_at = NOW()
    WHERE user_id = v_user;
 
   INSERT INTO public.sweeps (deposit_address_id) VALUES (p_deposit_address_id)
-  ON CONFLICT (deposit_address_id) WHERE status IN ('pending', 'submitted') DO NOTHING;
+  ON CONFLICT (deposit_address_id) WHERE status IN ('pending', 'submitted')
+  DO UPDATE SET next_attempt_at = NOW() WHERE sweeps.status = 'pending';
 
   RETURN jsonb_build_object('inserted', true, 'deposit_id', v_id, 'status', 'credited', 'user_id', v_user,
-                            'gross', v_gross, 'fee', v_fee, 'net', v_gross - v_fee);
+                            'amount', v_amount);
 END;
 $$;
 
--- Admin "Credit anyway" for a held (below-minimum) deposit. Credits amount minus fee
--- (never below zero) and opens a sweep. Works once per deposit.
+-- Admin "Credit anyway" for a held (below-minimum) deposit. Credits the full amount
+-- and opens a sweep. Works once per deposit.
 CREATE OR REPLACE FUNCTION public.credit_held_deposit(p_deposit_id UUID) RETURNS JSONB
 LANGUAGE plpgsql AS $$
-DECLARE d public.deposits%ROWTYPE; v_gross NUMERIC; v_fee NUMERIC; v_before NUMERIC; v_ref TEXT;
+DECLARE d public.deposits%ROWTYPE; v_amount NUMERIC; v_before NUMERIC;
 BEGIN
-  UPDATE public.deposits SET status = 'credited', fee_raw = LEAST(fee_raw, amount_raw)
+  UPDATE public.deposits SET status = 'credited'
    WHERE id = p_deposit_id AND status = 'review'
   RETURNING * INTO d;
   IF d.id IS NULL THEN
     RAISE EXCEPTION 'Deposit is not waiting for review';
   END IF;
-
-  v_gross := d.amount_raw / 1000000;
-  v_fee := d.fee_raw / 1000000;
-  v_ref := d.tx_id || ':' || d.log_index;
+  v_amount := d.amount_raw / 1000000;
 
   INSERT INTO public.ledger_accounts (user_id) VALUES (d.user_id) ON CONFLICT (user_id) DO NOTHING;
   SELECT available_balance INTO v_before FROM public.ledger_accounts WHERE user_id = d.user_id FOR UPDATE;
-
   INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id,
                                      description, balance_before, balance_after)
-  VALUES (d.user_id, 'deposit', v_gross, 'available', 'credit', v_ref,
-          'USDT-TRC20 deposit ' || d.tx_id || ' (approved by admin)', v_before, v_before + v_gross);
-  IF v_fee > 0 THEN
-    INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id,
-                                       description, balance_before, balance_after)
-    VALUES (d.user_id, 'deposit_fee', v_fee, 'available', 'debit', v_ref,
-            'Processing fee for deposit ' || d.tx_id, v_before + v_gross, v_before + v_gross - v_fee);
-  END IF;
-  UPDATE public.ledger_accounts SET available_balance = v_before + v_gross - v_fee, updated_at = NOW()
+  VALUES (d.user_id, 'deposit', v_amount, 'available', 'credit', d.tx_id || ':' || d.log_index,
+          'USDT-TRC20 deposit ' || d.tx_id || ' (approved by admin)', v_before, v_before + v_amount);
+  UPDATE public.ledger_accounts SET available_balance = v_before + v_amount, updated_at = NOW()
    WHERE user_id = d.user_id;
 
   INSERT INTO public.sweeps (deposit_address_id) VALUES (d.deposit_address_id)
-  ON CONFLICT (deposit_address_id) WHERE status IN ('pending', 'submitted') DO NOTHING;
+  ON CONFLICT (deposit_address_id) WHERE status IN ('pending', 'submitted')
+  DO UPDATE SET next_attempt_at = NOW() WHERE sweeps.status = 'pending';
 
-  RETURN jsonb_build_object('user_id', d.user_id, 'credited', v_gross - v_fee);
+  RETURN jsonb_build_object('user_id', d.user_id, 'credited', v_amount);
 END;
 $$;
 
@@ -518,7 +502,7 @@ BEGIN
     FOREACH f IN ARRAY ARRAY['lock_funds(uuid,numeric,text,text)','finalize_withdrawal(uuid,numeric,uuid)',
       'fail_withdrawal(uuid,numeric,uuid)','create_exchange_order(uuid,numeric,numeric,numeric,uuid,text)',
       'complete_exchange_order(uuid,boolean,text)','next_derivation_index()',
-      'record_deposit(text,uuid,text,integer,text,numeric,bigint,timestamptz,numeric,numeric)',
+      'record_deposit(text,uuid,text,integer,text,numeric,bigint,timestamptz,numeric)',
       'credit_held_deposit(uuid)'] LOOP
       EXECUTE format('REVOKE EXECUTE ON FUNCTION public.%s FROM PUBLIC, anon, authenticated', f);
     END LOOP;

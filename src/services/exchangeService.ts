@@ -3,17 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import configService from './configService.js';
 import complianceService from './complianceService.js';
 
-interface CachedRate {
-  rate: number;
-  lastUpdated: number;
-}
+import { CACHE_MS, fetchMarketRate, MarketRate, resolveRate } from './marketRate.js';
 
 export class ExchangeService {
   private static instance: ExchangeService;
-  private cachedRate: CachedRate = {
-    rate: 92.00,
-    lastUpdated: 0
-  };
+  private last: MarketRate | null = null;
+  private inflight: Promise<MarketRate> | null = null;
 
   private constructor() {}
 
@@ -24,27 +19,31 @@ export class ExchangeService {
     return ExchangeService.instance;
   }
 
+  /** Market rate, refreshed at most every CACHE_MS. Throws if stale (> 2 min) or sources disagree. */
+  private async marketRate(): Promise<MarketRate> {
+    if (this.last && Date.now() - this.last.updatedAt < CACHE_MS) return this.last;
+    // One refresh at a time; concurrent callers share it.
+    this.inflight ??= fetchMarketRate()
+      .then((fresh) => (this.last = resolveRate(fresh, this.last, Date.now())))
+      .finally(() => (this.inflight = null));
+    return this.inflight;
+  }
+
+  async getRateInfo() {
+    const m = await this.marketRate();
+    const spreadPercent = Number(configService.get('exchange_spread_percent') || 0);
+    return {
+      rate: Number((m.rate * (1 - spreadPercent / 100)).toFixed(2)),
+      marketRate: Number(m.rate.toFixed(2)),
+      spreadPercent,
+      source: m.source,
+      updatedAt: new Date(m.updatedAt).toISOString(),
+    };
+  }
+
+  /** User rate (market minus spread). Throws when no trustworthy rate exists, which blocks sells. */
   async getLiveRate(): Promise<number> {
-    const now = Date.now();
-    const CACHE_DURATION = 10000;
-    const spreadPercent = configService.get('exchange_spread_percent') || 0;
-
-    if (now - this.cachedRate.lastUpdated >= CACHE_DURATION) {
-      try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=inr');
-        if (response.ok) {
-          const data = await response.json() as { tether: { inr: number } };
-          if (data.tether?.inr) {
-            this.cachedRate = { rate: data.tether.inr, lastUpdated: now };
-          }
-        }
-      } catch (error: any) {
-        console.error('[EXCHANGE_SERVICE] Rate fetch error:', error.message);
-      }
-    }
-
-    const userRate = this.cachedRate.rate * (1 - (spreadPercent / 100));
-    return Number(userRate.toFixed(2));
+    return (await this.getRateInfo()).rate;
   }
 
   async createExchangeOrder(userId: string, usdtAmount: number, bankAccountId?: string, bankDetails?: any) {

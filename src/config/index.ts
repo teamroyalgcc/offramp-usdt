@@ -18,14 +18,13 @@ const configSchema = z.object({
   TRON_SOLIDITY_NODE: z.string().url().default('https://api.trongrid.io'),
   TRON_EVENT_SERVER: z.string().url().default('https://api.trongrid.io'),
   USDT_CONTRACT_ADDRESS: z.string().optional(),
-  // GasFree deposits (see docs/GASFREE_SWEEP_IMPLEMENTATION.md). HD_MNEMONIC is read in src/tron/seed.ts.
-  GASFREE_API_KEY: z.string().optional(),
-  GASFREE_API_SECRET: z.string().optional(),
-  GASFREE_PROVIDER_ADDRESS: z.string().optional(),
-  DEPOSIT_MIN_NET_USDT: z.string().default('10'),
-  DEPOSIT_PROCESSING_FEE_USDT: z.string().default('1.5'), // fallback only, used when GasFree cannot quote a live fee
-  DEPOSIT_FEE_MARGIN_USDT: z.string().default('0'),       // added on top of the live GasFree fee
-  GASFREE_MAX_FEE_USDT: z.string().default('5'),
+  // Deposits + sweeps (see docs/GASFREE_SWEEP_IMPLEMENTATION.md). HD_MNEMONIC is read in src/tron/seed.ts.
+  DEPOSIT_MIN_USDT: z.string().default('10'),        // smaller deposits are held for admin review
+  SWEEP_IMMEDIATE_USDT: z.string().default('100'),   // at or above: swept now; below: within 24 h
+  SWEEP_MAX_COST_TRX: z.string().default('10').transform(Number), // per sweep, rental + burn
+  NETTS_API_KEY: z.string().optional(),
+  OPERATING_WALLET_PRIVATE_KEY: z.string().optional(), // hot TRX-only wallet: pays burn fallback
+  OPERATING_WALLET_MIN_TRX: z.string().default('50').transform(Number), // daily alert below this
   ALERT_EMAIL: z.string().optional(),
   DATABASE_URL: z.string().optional(),
 });
@@ -59,14 +58,13 @@ export const config = {
       || (validatedConfig.TRON_NETWORK === 'testnet' ? 'TXLAQ63Xg1qMAr3zCPwrCcS9R8x5QJ2GvX' : 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'),
     proApiKey: validatedConfig.TRON_PRO_API_KEY,
   },
-  gasfree: {
-    apiKey: validatedConfig.GASFREE_API_KEY || '',
-    apiSecret: validatedConfig.GASFREE_API_SECRET || '',
-    providerAddress: validatedConfig.GASFREE_PROVIDER_ADDRESS,
-    minNetUsdt: validatedConfig.DEPOSIT_MIN_NET_USDT,
-    processingFeeUsdt: validatedConfig.DEPOSIT_PROCESSING_FEE_USDT,
-    feeMarginUsdt: validatedConfig.DEPOSIT_FEE_MARGIN_USDT,
-    maxFeeUsdt: validatedConfig.GASFREE_MAX_FEE_USDT,
+  sweep: {
+    minDepositUsdt: validatedConfig.DEPOSIT_MIN_USDT,
+    immediateUsdt: validatedConfig.SWEEP_IMMEDIATE_USDT,
+    maxCostTrx: validatedConfig.SWEEP_MAX_COST_TRX,
+    nettsApiKey: validatedConfig.NETTS_API_KEY || '',
+    operatingKey: validatedConfig.OPERATING_WALLET_PRIVATE_KEY || '',
+    operatingMinTrx: validatedConfig.OPERATING_WALLET_MIN_TRX,
   },
   alertEmail: validatedConfig.ALERT_EMAIL || '',
   databaseUrl: validatedConfig.DATABASE_URL || '',

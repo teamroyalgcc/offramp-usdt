@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
 import { TronWeb } from 'tronweb';
 import { formatUsdt, parseUsdt } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
-import { authHeaders, Permit, recoverPermitSigner, signPermit } from './gasfree.js';
+import { burnSunNeeded, energyToRent, nettsIdempotencyKey, sweepDueAt } from './energy.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -38,35 +37,29 @@ test('xpub must be account level', () => {
   assert.throws(() => deriveAddressFromXpub(tooDeep.publicKey, 0));
 });
 
-test('TIP-712 permit signature recovers the EOA on its own network only', () => {
-  const eoa = deriveAddressFromXpub(accountXpub(PHRASE), 0);
-  const pk = derivePrivateKey(PHRASE, 0, eoa);
-  const permit: Permit = {
-    token: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-    serviceProvider: 'TKtWbdzEq5ss9vTS9kwRhBp5mXmBfBns3E',
-    user: eoa,
-    receiver: 'TMVQGm1qAQYVdetCeGRRkTWYYrLXuHK2HC',
-    value: 98_000_000n,
-    maxFee: 2_000_000n,
-    deadline: 1_900_000_000,
-    version: 1,
-    nonce: 0,
-  };
-  const sig = signPermit('mainnet', permit, pk);
-  assert.match(sig, /^[0-9a-f]{130}$/);
-  assert.equal(recoverPermitSigner('mainnet', permit, sig), eoa);
-  assert.notEqual(recoverPermitSigner('testnet', permit, sig), eoa);
-  assert.notEqual(recoverPermitSigner('mainnet', { ...permit, value: permit.value + 1n }, sig), eoa);
+test('sweep timing: >= threshold now, below it 24 h after the sweep opened', () => {
+  const opened = new Date('2026-09-26T00:00:00Z');
+  const t100 = 100_000_000n;
+  assert.equal(sweepDueAt(t100, t100, opened).getTime(), 0);
+  assert.equal(sweepDueAt(250_000_000n, t100, opened).getTime(), 0);
+  assert.equal(sweepDueAt(t100 - 1n, t100, opened).toISOString(), '2026-09-27T00:00:00.000Z');
 });
 
-test('GasFree auth header signs METHOD + prefixed path + timestamp', () => {
-  const h = authHeaders('key', 'secret', 'GET', '/tron/api/v1/address/TXXX', 1731912286);
-  const expected = createHmac('sha256', 'secret').update('GET/tron/api/v1/address/TXXX1731912286').digest('base64');
-  assert.deepEqual(h, { Timestamp: '1731912286', Authorization: `ApiKey key:${expected}` });
+test('energy amounts: rent estimate + 5%, never below the Netts minimum', () => {
+  assert.equal(energyToRent(64_285), 67_500); // ceil(64285 * 1.05)
+  assert.equal(energyToRent(130_285), 136_800);
+  assert.equal(energyToRent(30_000), 61_000);
 });
 
-test('deposit fee = live GasFree transfer fee + margin; activation absorbed by the platform', async () => {
-  const { depositFee } = await import('./gasfree.js');
-  assert.equal(depositFee({ transferFee: 1_500_000n }, 0n), 1_500_000n);       // live mainnet, Sep 2026
-  assert.equal(depositFee({ transferFee: 1_500_000n }, 200_000n), 1_700_000n);
+test('burn fallback: TRX for the missing energy at the live price, plus 1 TRX for bandwidth', () => {
+  assert.equal(burnSunNeeded(64_285, 0, 100), 67_500n * 100n + 1_000_000n); // 7.75 TRX
+  assert.equal(burnSunNeeded(64_285, 67_500, 100), 1_000_000n);             // energy already there
+  assert.equal(burnSunNeeded(64_285, 70_000, 100), 1_000_000n);
+});
+
+test('Netts idempotency key: 64 hex, stable per sweep + attempt, new per attempt', () => {
+  const k = nettsIdempotencyKey('sweep-1', 0);
+  assert.match(k, /^[a-f0-9]{64}$/);
+  assert.equal(k, nettsIdempotencyKey('sweep-1', 0));
+  assert.notEqual(k, nettsIdempotencyKey('sweep-1', 1));
 });

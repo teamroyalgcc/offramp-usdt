@@ -6,7 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 
 // Applies db/schema.sql to an empty in-process Postgres (PGlite) and checks every
-// money function: deposits, held credits, sweeps, sell orders, withdrawals.
+// money function: deposits (no fee), held credits, sweeps, sell orders, withdrawals.
 const SCHEMA = fs.readFileSync(fileURLToPath(new URL('../../db/schema.sql', import.meta.url)), 'utf8');
 
 test('schema.sql money functions', async () => {
@@ -27,17 +27,20 @@ test('schema.sql money functions', async () => {
   const a = (await one(`insert into deposit_addresses (user_id, tron_address, eoa_address, derivation_index) values ($1,'TGF1','TEOA1',0) returning id`, [u])).id;
   await assert.rejects(db.query(`insert into deposit_addresses (user_id, tron_address, eoa_address, derivation_index) values ($1,'TGF2','TEOA2',1)`, [u]), /duplicate key/);
   const rec = (tx: string, li: number, amt: string) =>
-    one(`select record_deposit('tron_mainnet',$1,$2,$3,'TFROM',$4,100,now(),10000000,1500000) r`, [a, tx, li, amt]).then((x) => x.r);
+    one(`select record_deposit('tron_mainnet',$1,$2,$3,'TFROM',$4,100,now(),10000000) r`, [a, tx, li, amt]).then((x) => x.r);
   const r = await rec('tx1', 0, '25000000');
-  assert.equal(r.status, 'credited'); assert.equal(Number(r.net), 23.5);
+  assert.equal(r.status, 'credited'); assert.equal(Number(r.amount), 25);   // full amount, no fee
   assert.equal((await rec('tx1', 0, '25000000')).inserted, false);      // duplicate event
   assert.equal((await rec('tx1', 1, '25000000')).status, 'credited');   // second log, same tx
-  assert.equal((await rec('tx2', 0, '11000000')).status, 'review');     // net 9.5 < 10
-  assert.equal((await rec('tx3', 0, '11500000')).status, 'credited');   // net exactly 10
-  assert.deepEqual(await acct(), { a: '57.000000', l: '0.000000' });
+  assert.equal((await rec('tx2', 0, '9500000')).status, 'review');      // 9.5 < 10
+  assert.equal((await rec('tx3', 0, '10000000')).status, 'credited');   // exactly 10
+  assert.deepEqual(await acct(), { a: '60.000000', l: '0.000000' });
 
-  // one open sweep; conditional claim wins once
+  // one open sweep; a new deposit wakes a deferred (pending) sweep; conditional claim wins once
   assert.equal((await one(`select count(*)::int c from sweeps where deposit_address_id=$1`, [a])).c, 1);
+  await db.query(`update sweeps set next_attempt_at = now() + interval '20 hours'`);
+  await rec('tx3b', 0, '10000000');
+  assert.equal((await one(`select next_attempt_at <= now() due from sweeps`)).due, true);
   await db.query(`update sweeps set status='confirmed'`);
   await rec('tx4', 0, '20000000');
   const sid = (await one(`select id from sweeps where status='pending'`)).id;
@@ -49,13 +52,13 @@ test('schema.sql money functions', async () => {
   const held = (await one(`select id from deposits where status='review'`)).id;
   assert.equal(Number((await one(`select credit_held_deposit($1) r`, [held])).r.credited), 9.5);
   await assert.rejects(db.query(`select credit_held_deposit($1)`, [held]), /not waiting for review/);
-  const tiny = await rec('tx5', 0, '1000000');
-  assert.equal(Number((await one(`select credit_held_deposit($1) r`, [tiny.deposit_id])).r.credited), 0);
-  assert.deepEqual(await acct(), { a: '85.000000', l: '0.000000' }); // 57 + 18.5 + 9.5
+  assert.deepEqual(await acct(), { a: '99.500000', l: '0.000000' }); // 60 + 10 + 20 + 9.5
 
   // sell orders: lock -> paid once / refund
   const order = (amt: number) => one(`select create_exchange_order($1,$2,$3,90,null,$4) r`, [u, amt, amt * 90, crypto.randomUUID()]).then((x) => x.r);
   assert.equal((await order(1000)).success, false);
+  await one(`select lock_funds($1, 14.5, 'trim', 'w') r`, [u]); // bring available to 85 for the checks below
+  await db.query(`select finalize_withdrawal($1, 14.5, $2)`, [u, crypto.randomUUID()]);
   const o1 = await order(50);
   assert.deepEqual(await acct(), { a: '35.000000', l: '50.000000' });
   await db.query(`select complete_exchange_order($1, true, 'UTR123')`, [o1.order_id]);

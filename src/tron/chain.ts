@@ -107,14 +107,58 @@ export class TronChain {
     return BigInt('0x' + (await this.constantCall(token, 'balanceOf(address)', address)));
   }
 
-  /** Independent check of the provider-returned GasFree address via the controller contract. */
-  async gasFreeAddressOf(controller: string, eoa: string): Promise<string> {
-    return fromHex20(await this.constantCall(controller, 'getGasFreeAddress(address)', eoa));
-  }
-
   /** Solidified tx confirmation for a sweep: exact USDT transfer from -> to of amount. */
   async verifySweep(txId: string, token: string, from: string, to: string, amountRaw: bigint): Promise<boolean> {
     const logs = await this.solidTransfersTo(txId, token, to);
     return logs.some((l) => l.from === from && l.amountRaw === amountRaw);
+  }
+
+  /** Receipt result of a solidified tx ('SUCCESS', 'OUT_OF_ENERGY', ...), or null if not solid yet. */
+  async solidResult(txId: string): Promise<string | null> {
+    const info = await this.req(`${this.cfg.solidityNode}/walletsolidity/gettransactioninfobyid`, { value: txId });
+    return info?.id ? (info.receipt?.result ?? 'SUCCESS') : null;
+  }
+
+  /** Energy a USDT transfer would use right now. `from` must hold at least `amountRaw`. */
+  async estimateTransferEnergy(token: string, from: string, to: string, amountRaw: bigint): Promise<number> {
+    const json = await this.req(`${this.cfg.fullNode}/wallet/triggerconstantcontract`, {
+      owner_address: from,
+      contract_address: token,
+      function_selector: 'transfer(address,uint256)',
+      parameter: hex20(to).padStart(64, '0') + amountRaw.toString(16).padStart(64, '0'),
+      visible: true,
+    });
+    if (!json?.result?.result || json.result.message || !json.energy_used) {
+      throw new Error(`energy estimate failed: ${json?.result?.message ?? 'no energy_used'}`);
+    }
+    return Number(json.energy_used);
+  }
+
+  /** Whether the account exists, its spendable energy, bandwidth and TRX (sun). */
+  async resources(address: string): Promise<{ exists: boolean; energy: number; bandwidth: number; trxSun: bigint }> {
+    const [acct, res] = await Promise.all([
+      this.req(`${this.cfg.fullNode}/wallet/getaccount`, { address, visible: true }),
+      this.req(`${this.cfg.fullNode}/wallet/getaccountresource`, { address, visible: true }),
+    ]);
+    return {
+      exists: Boolean(acct?.address),
+      energy: Math.max(0, Number(res?.EnergyLimit ?? 0) - Number(res?.EnergyUsed ?? 0)),
+      bandwidth: Math.max(0, Number(res?.freeNetLimit ?? 0) - Number(res?.freeNetUsed ?? 0))
+        + Math.max(0, Number(res?.NetLimit ?? 0) - Number(res?.NetUsed ?? 0)),
+      trxSun: BigInt(acct?.balance ?? 0),
+    };
+  }
+
+  /** Current burn price of one energy unit, in sun. */
+  async energyFeeSun(): Promise<number> {
+    const json = await this.req(`${this.cfg.fullNode}/wallet/getchainparameters`);
+    const p = (json.chainParameter ?? []).find((x: any) => x.key === 'getEnergyFee');
+    if (!p) throw new Error('getEnergyFee missing from chain parameters');
+    return Number(p.value);
+  }
+
+  async broadcast(signedTx: unknown): Promise<void> {
+    const json = await this.req(`${this.cfg.fullNode}/wallet/broadcasttransaction`, signedTx);
+    if (!json?.result) throw new Error(`broadcast rejected: ${json?.code ?? ''} ${json?.message ? Buffer.from(json.message, 'hex').toString() : ''}`);
   }
 }

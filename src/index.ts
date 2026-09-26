@@ -18,7 +18,7 @@ import { adminAuth } from './middleware/adminAuth.js';
 import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
 import supabase from './utils/supabase.js';
-import gasfreeWorker from './workers/gasfreeWorker.js';
+import depositWorker from './workers/depositWorker.js';
 
 const app = express();
 const server = createServer(app);
@@ -217,8 +217,8 @@ const startServer = async () => {
     await configService.loadConfig();
     console.log('✅ Configuration loaded from database');
 
-    // 1. Background workers run in this same process (one instance only; see gasfreeWorker.ts).
-    await gasfreeWorker.start();
+    // 1. Background workers run in this same process (one instance only; see depositWorker.ts).
+    await depositWorker.start();
 
     // 2. Start Express Server
     server.listen(config.port, '0.0.0.0', () => {

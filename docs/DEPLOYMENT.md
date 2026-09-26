@@ -28,7 +28,7 @@ Use one password manager entry per value below. You will paste them into Render,
 
 ## Step 1. Wallets (15 min, offline where possible)
 
-You need two different wallets. Never reuse one for the other.
+You need three different wallets. Never reuse one for another.
 
 1. **Treasury wallet.** All user USDT ends up here.
    - Create it in TronLink or on a hardware wallet (Ledger).
@@ -45,6 +45,9 @@ You need two different wallets. Never reuse one for the other.
 
    - Write it on paper and keep it with the client as a backup. It goes into Render in Step 4.
    - **Rule:** set it once, before the first real user, and never change it. The backend refuses to start if it is changed after addresses exist.
+3. **Operating wallet** (`OPERATING_WALLET_PRIVATE_KEY`). A small hot wallet that holds **TRX only, never USDT**. It pays the fallback when Netts cannot rent energy (it sends TRX to a deposit address, which burns it to move the USDT).
+   - Create a new account in TronLink → export its **private key**. It goes into Render in Step 4 only.
+   - Fund it with about 100 TRX. The daily check emails `ALERT_EMAIL` when it drops below `OPERATING_WALLET_MIN_TRX` (default 50).
 
 ## Step 2. Supabase database (15 min)
 
@@ -77,7 +80,10 @@ One Supabase project serves everything. Only the backend talks to it; the app an
 ## Step 3. API keys (20 min)
 
 1. **TronGrid.** Go to <https://www.trongrid.io> → sign up → Dashboard → **Create API Key**. The key is `TRON_PRO_API_KEY`. The free tier is plenty.
-2. **GasFree.** Go to <https://developer.gasfree.io> → register → create a **mainnet** API key. You get `GASFREE_API_KEY` and `GASFREE_API_SECRET`.
+2. **Netts (energy rental).** Go to <https://www.netts.io/workspace/> → register. An API key is issued automatically: this is `NETTS_API_KEY`.
+   - Wallet → deposit about 50 TRX (prepaid balance; one sweep costs about 2 to 4 TRX).
+   - API → IP whitelist: add Render's outbound IPs (Render → your service → **Connect** → **Outbound**). Do this after Step 4 creates the service.
+   - Never paste the key anywhere except Render.
 3. **Brevo (email).**
    - Go to <https://www.brevo.com> → sign up.
    - Senders → add and verify the sender address, for example `support@yourdomain.com` or a Gmail address. This is `EMAIL_FROM`.
@@ -112,14 +118,13 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    | `DATABASE_URL` | session pooler URI from Step 2 |
    | `JWT_SECRET` | from Step 3 |
    | `TRON_PRO_API_KEY` | from Step 3 |
-   | `GASFREE_API_KEY` | from Step 3 |
-   | `GASFREE_API_SECRET` | from Step 3 |
+   | `NETTS_API_KEY` | from Step 3 |
    | `HD_MNEMONIC` | the deposit seed phrase from Step 1 |
-   | `TREASURY_ADDRESS` | treasury **address** from Step 1 |
-   | `DEPOSIT_FEE_MARGIN_USDT` | `0` (added to the live GasFree transfer fee; 0 = users pay exactly GasFree's fee) |
-   | `DEPOSIT_PROCESSING_FEE_USDT` | `1.5` (fallback only, used when GasFree cannot quote a live fee) |
-   | `DEPOSIT_MIN_NET_USDT` | `10` |
-   | `GASFREE_MAX_FEE_USDT` | `5` (a first sweep costs activation + transfer, 3.0 USDT in Sep 2026) |
+   | `TREASURY_ADDRESS` | treasury **address** from Step 1 (pinned in the database on first start; the server refuses to start if it later differs) |
+   | `OPERATING_WALLET_PRIVATE_KEY` | operating wallet private key from Step 1 |
+   | `DEPOSIT_MIN_USDT` | `10` (smaller deposits are held for admin review) |
+   | `SWEEP_IMMEDIATE_USDT` | `100` (at or above: moved to treasury at once; below: within 24 h) |
+   | `SWEEP_MAX_COST_TRX` | `10` (safety limit per transfer to treasury) |
    | `BREVO_API_KEY` | from Step 3 |
    | `EMAIL_FROM` | verified Brevo sender |
    | `ALERT_EMAIL` | the client's email for daily problem alerts |
@@ -128,9 +133,10 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    Do **not** set `SYSTEM_PRIVATE_KEY`. It is no longer used.
 4. **Deploy.** In the logs, wait for:
    - `🚀 Server running`
-   - a JSON line with `"msg":"started"`, which shows the live GasFree `activateFee` and `transferFee`.
+   - a JSON line with `"msg":"started"`, showing the treasury, `"netts":true` and the operating wallet address.
 
-   If you see `GasFree does not list ...` or an API error instead, check the GasFree keys. Opening `https://<your-service>.onrender.com/health` should return `status: ok`.
+   If the server stops with `TREASURY_ADDRESS ... differs from the pinned treasury`, the env var has a typo; fix it. Opening `https://<your-service>.onrender.com/health` should return `status: ok`.
+6. Now whitelist the service's outbound IPs in Netts (Step 3.2).
 5. Your API base is `https://<your-service>.onrender.com`. The app uses it with `/api` appended; the admin panel uses it without.
 
 > **Run exactly one instance.** The worker is inside the API process. Never scale this service above one instance.
@@ -170,12 +176,12 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
 
 1. In the app: sign in, complete KYC and add a bank account. In the admin panel: approve the KYC.
    - Profile → **Transaction PIN** → set a 6-digit PIN. Try selling before setting it: the app must send you to the PIN screen first.
-2. **Deposit.** Open Deposit in the app. It shows the **live** processing fee: GasFree's transfer fee plus `DEPOSIT_FEE_MARGIN_USDT` (1.5 USDT with margin 0, Sep 2026), and the minimum deposit (10 + fee = 11.5). The platform pays the one-time activation. Send **20 USDT (TRC20)** from any wallet or exchange to the address shown.
-   - Within about 1 to 3 minutes the app shows "Deposit received", and the balance becomes 20 minus the fee shown.
-   - In the admin Dashboard, the deposit appears as **Credited**, then **Moved to treasury** a few minutes later.
-   - On <https://tronscan.org>, the treasury address received the USDT minus GasFree's fee.
-3. **Check the fee.** History → Statement → Processing fee should be 1.5. In Supabase, `sweeps.actual_fee_raw` / 1,000,000 for this first sweep should be 3.0 (activation + transfer; the platform paid the extra 1.5). Later deposits to the same address sweep for 1.5.
-4. **Sell order.** The minimum sell is 10 USDT (`system_settings.min_exchange_usdt`). With the balance from step 2 (18.5 USDT):
+2. **Deposit.** Open Deposit in the app. It shows processing fee **Free** and minimum deposit **10**. Send **20 USDT (TRC20)** from any wallet or exchange to the address shown.
+   - Within about 1 to 3 minutes the app shows "Deposit received", and the balance becomes exactly **20**.
+   - In the admin Dashboard, the deposit appears as **Credited**. It stays **In progress** for up to 24 h, because balances under `SWEEP_IMMEDIATE_USDT` (100) are moved to treasury once a day.
+   - To test the transfer now, set `SWEEP_IMMEDIATE_USDT` to `10` in Render for this test (the service restarts), then set it back to `100`.
+3. **Check the transfer to treasury.** The deposit shows **Moved to treasury**. On <https://tronscan.org>, the treasury received the full 20 USDT. In Supabase, the `sweeps` row shows `provider` (`netts`, or `burn` if Netts was unavailable) and `cost_trx` (about 2 to 4 TRX with Netts, including the one-time activation of the new address).
+4. **Sell order.** The minimum sell is 10 USDT (`system_settings.min_exchange_usdt`). With the balance from step 2 (20 USDT):
    - Sell 10 USDT. Admin → Sell Orders → open the order → choose **Refund**. The balance returns to what it was.
    - Sell 10 USDT again. Send the INR to the bank shown → choose **Paid**, enter the UTR and confirm. The order shows as completed in the app, and the balance drops by 10.
    - **PIN checks.** Enter a wrong PIN: the order is refused ("Wrong PIN. 4 attempts left."). Five wrong PINs lock sells and withdrawals for 15 minutes. **Forgot PIN?** on the PIN screen sends an email code and lets you set a new PIN without the old one.
@@ -211,7 +217,7 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
 ## Step 10. Handover checklist
 
 - [ ] The client holds on paper: the treasury seed and the `HD_MNEMONIC` backup.
-- [ ] The client owns or is an admin on: the GitHub org, Supabase (project transferred), Render, Cloudflare, Expo, Brevo, GasFree, TronGrid and cron-job.org. Two-factor authentication is on everywhere.
+- [ ] The client owns or is an admin on: the GitHub org, Supabase (project transferred), Render, Cloudflare, Expo, Brevo, Netts, TronGrid and cron-job.org. Two-factor authentication is on everywhere.
 - [ ] The seed admin password is changed, and each staff member has their own admin login.
 - [ ] `ALERT_EMAIL` points to the client.
 - [ ] The client has read [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
