@@ -36,7 +36,7 @@ export const nettsIdempotencyKey = (sweepId: string, attempt: number) =>
 let egressIp: { ip: string; at: number } | null = null;
 
 /** Netts wants a whitelisted IP in X-Real-IP; send the one Render actually leaves from. */
-async function currentEgressIp(): Promise<string> {
+export async function currentEgressIp(): Promise<string> {
   if (egressIp && Date.now() - egressIp.at < 5 * 60_000) return egressIp.ip;
   const ip = (await (await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) })).text()).trim();
   egressIp = { ip, at: Date.now() };

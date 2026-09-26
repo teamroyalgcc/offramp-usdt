@@ -2,7 +2,7 @@ import { TronWeb } from 'tronweb';
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { burnSunNeeded, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
+import { burnSunNeeded, currentEgressIp, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -92,6 +92,13 @@ export class DepositWorker {
     // Re-check deferred sweeps now, so a changed SWEEP_IMMEDIATE_USDT applies at once.
     await query(`UPDATE sweeps SET next_attempt_at = NOW() WHERE status = 'pending'`);
     log('started', { network: NETWORK, token: USDT, treasury, netts: Boolean(config.sweep.nettsApiKey), operatingWallet: this.operatingAddress() });
+    // Render leaves from a shared range; log the actual IP so it can be whitelisted in Netts.
+    if (config.sweep.nettsApiKey) {
+      const egress = await currentEgressIp().catch((e) => `unknown (${e.message})`);
+      nettsBalanceTrx(config.sweep.nettsApiKey)
+        .then((balanceTrx) => log('netts ok', { egress, balanceTrx }))
+        .catch((e) => log('netts FAILED: whitelist this egress IP in Netts', { egress, error: e.message.slice(0, 200) }));
+    }
     this.running = true;
     void this.loop();
   }
@@ -437,7 +444,8 @@ export class DepositWorker {
         const bal = await nettsBalanceTrx(config.sweep.nettsApiKey);
         if (!(bal >= 20)) out.push(`Netts balance is ${bal} TRX. Top it up at netts.io.`);
       } catch (e: any) {
-        out.push(`Could not read the Netts balance (${e.message.slice(0, 100)}).`);
+        const ip = await currentEgressIp().catch(() => 'unknown');
+        out.push(`Could not read the Netts balance (${e.message.slice(0, 100)}). If the IP is not whitelisted, add ${ip} in Netts > API > IP Whitelist.`);
       }
     }
     return out;
