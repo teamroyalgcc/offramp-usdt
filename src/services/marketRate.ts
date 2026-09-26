@@ -1,20 +1,15 @@
-// USDT/INR market rate = the LOWEST of several live quotes for what a USDT seller gets.
-// The platform pays INR for users' USDT, so it never quotes above the cheapest market.
-// Pure logic + fetchers only; no config/supabase imports, so it is unit-testable.
+// USDT/INR market rate = the LOWEST best bid among the big Indian exchanges, i.e. what
+// a user would get selling USDT there (our competitors). The platform pays INR for users'
+// USDT, so it never quotes above that. P2P was dropped (user decision 2026-09-26): it runs
+// 3 to 4% higher and is noisy. Pure logic + fetchers only; no config/supabase imports.
 //
-// Sources (price a seller receives, median of the top ads/quote):
-//   binance_p2p: Binance P2P merchant buyers paying by UPI (tradeType=SELL = ads that BUY USDT)
-//   okx_p2p:     OKX P2P buy ads
-//   coindcx:     CoinDCX USDTINR best bid
-//   wazirx:      WazirX usdtinr best buy
-// ponytail: Binance merchant filter and OKX use undocumented public endpoints; if Render gets
-// blocked they just count as unavailable and the others carry on.
+// Sources: CoinDCX USDTINR bid, WazirX usdtinr buy, ZebPay USDT-INR bid (all public, no key).
 
-export const MAX_SPREAD = 0.08; // highest/lowest source above this -> something is off, pause sells
+export const MAX_SPREAD = 0.03; // highest/lowest above this -> a feed is off, pause sells (exchanges agree within ~0.3%)
 export const STALE_MS = 2 * 60_000;
 export const CACHE_MS = 30_000;
 
-export type SourceName = 'binance_p2p' | 'okx_p2p' | 'coindcx' | 'wazirx';
+export type SourceName = 'coindcx' | 'wazirx' | 'zebpay';
 export type Sources = Record<SourceName, number | null>;
 
 export interface MarketRate {
@@ -52,33 +47,19 @@ export function resolveRate(fresh: MarketRate | null, last: MarketRate | null, n
   throw new Error('Live rate unavailable, try again shortly');
 }
 
-const req = async (url: string, body?: unknown) => {
-  const res = await fetch(url, {
-    method: body ? 'POST' : 'GET',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(5000),
-  });
+const req = async (url: string) => {
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${new URL(url).host}`);
   return res.json() as Promise<any>;
 };
 
 const fetchers: Record<SourceName, () => Promise<number | null>> = {
-  binance_p2p: async () => {
-    const j = await req('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
-      fiat: 'INR', asset: 'USDT', tradeType: 'SELL', page: 1, rows: 10, payTypes: ['UPI'], publisherType: 'merchant',
-    });
-    return median((j?.data ?? []).map((a: any) => Number(a.adv?.price)));
-  },
-  okx_p2p: async () => {
-    const j = await req('https://www.okx.com/v3/c2c/tradingOrders/books?quoteCurrency=INR&baseCurrency=USDT&side=buy&paymentMethod=all&userType=all&showTrade=false&showFollow=false&showAlreadyTraded=false&isAbleFilter=false&receivingAds=false');
-    return median((j?.data?.buy ?? []).slice(0, 10).map((a: any) => Number(a.price)));
-  },
   coindcx: async () => {
     const t: any[] = await req('https://api.coindcx.com/exchange/ticker');
     return Number(t.find((x) => x.market === 'USDTINR')?.bid) || null;
   },
   wazirx: async () => Number((await req('https://api.wazirx.com/api/v2/tickers/usdtinr'))?.ticker?.buy) || null,
+  zebpay: async () => Number((await req('https://sapi.zebpay.com/api/v2/market/ticker?symbol=USDT-INR'))?.data?.bid) || null,
 };
 
 /** Fetches every source; a failed source counts as unavailable. Disagreement still throws. */
