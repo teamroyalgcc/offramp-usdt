@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS public.sweeps (
   deposit_address_id UUID NOT NULL REFERENCES public.deposit_addresses(id),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'submitted', 'confirmed', 'failed')),
   amount_raw NUMERIC(38, 0),
-  provider TEXT,                           -- netts | burn (last energy source used)
+  provider TEXT,                           -- netts | tronnrg | burn | activate (last energy purchase)
   order_id TEXT,                           -- Netts order id
   cost_trx NUMERIC(20, 6) NOT NULL DEFAULT 0, -- total TRX spent on energy for this sweep
   rented_at TIMESTAMPTZ,

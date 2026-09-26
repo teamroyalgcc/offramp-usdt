@@ -2,7 +2,7 @@ import { TronWeb } from 'tronweb';
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { burnSunNeeded, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt } from '../tron/energy.js';
+import { burnSunNeeded, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -11,7 +11,7 @@ import { sendEmail } from '../utils/email.js';
 
 // Detect finalized USDT deposits to per-user HD addresses, credit them atomically
 // (record_deposit, no fee), and sweep them to the treasury. The sweep's energy is
-// rented from Netts, or bought by burning TRX sent from the operating wallet.
+// rented from Netts, else TronNRG, else bought by burning TRX sent from the operating wallet.
 // Only addresses inside their watch window (user opened the deposit screen) are
 // polled. Only the pinned USDT contract counts; other tokens and TRX are ignored.
 //
@@ -253,7 +253,7 @@ export class DepositWorker {
     // Energy or TRX was just bought: give it time to show up before paying again.
     if (s.rented_at && Date.now() - new Date(s.rented_at).getTime() < RENTAL_SETTLE_MS) return this.setStatus(s.id, {}, 5);
 
-    const spentSun = BigInt(Math.round(Number(s.cost_trx) * 1e6));
+    let spentSun = BigInt(Math.round(Number(s.cost_trx) * 1e6));
     if (spentSun >= this.capSun) return this.failCost(s, spentSun);
     if (s.attempts >= MAX_ATTEMPTS) return this.retryOrFail(s, s.last_error ?? 'too_many_attempts', 0);
     const claimed = await query(
@@ -262,33 +262,72 @@ export class DepositWorker {
     );
     if (!claimed.rowCount) return;
 
+    const opKey = config.sweep.operatingKey.replace(/^0x/, '');
+    const bought = (provider: string, costSun: bigint, orderId: string | null = null) => {
+      log('energy bought', { sweep: s.id, provider, costTrx: sunToTrx(costSun), orderId });
+      return this.setStatus(s.id, { provider, order_id: orderId, cost_trx: sunToTrx(spentSun + costSun), rented_at: new Date(), last_error: null }, 3);
+    };
     const errors: string[] = [];
-    // Netts only rents energy; if energy is there and only bandwidth is missing, go straight to sending TRX.
+
+    // 1. Netts. Only rents energy; if just bandwidth is missing, skip to burn.
     if (config.sweep.nettsApiKey && res.energy < estimate) {
       const need = energyToRent(estimate);
       try {
         const o = await nettsRent5m(config.sweep.nettsApiKey, addr, need, nettsIdempotencyKey(s.id, s.attempts));
-        const cost = Number(s.cost_trx) + o.paidTrx;
-        if (cost > config.sweep.maxCostTrx) alert('Netts rental pushed sweep over the cost cap', { sweep: s.id, costTrx: cost });
-        log('energy rented', { sweep: s.id, provider: 'netts', energy: need, paidTrx: o.paidTrx, orderId: o.orderId });
-        return this.setStatus(s.id, { provider: 'netts', order_id: o.orderId, cost_trx: cost, rented_at: new Date(), last_error: null }, 3);
+        const costSun = BigInt(Math.round(o.paidTrx * 1e6));
+        if (spentSun + costSun > this.capSun) alert('Netts rental pushed sweep over the cost cap', { sweep: s.id, costTrx: sunToTrx(spentSun + costSun) });
+        return bought('netts', costSun, o.orderId);
       } catch (e: any) {
         errors.push(e.message);
         log('Netts rental failed, trying next provider', { sweep: s.id, error: e.message });
       }
     }
-    if (config.sweep.operatingKey) {
-      const sendSun = burnSun - res.trxSun;
-      if (spentSun + sendSun > this.capSun) return this.failCost(s, spentSun + sendSun);
-      try {
-        const r: any = await this.tronWeb.trx.sendTransaction(addr, Number(sendSun), { privateKey: config.sweep.operatingKey.replace(/^0x/, '') });
-        if (!r?.result) throw new Error(`TRX send rejected: ${r?.code ?? ''}`);
-        log('TRX sent for burn', { sweep: s.id, provider: 'burn', trx: sunToTrx(sendSun), txId: r.txid });
-        return this.setStatus(s.id, { provider: 'burn', cost_trx: Number(s.cost_trx) + sunToTrx(sendSun), rented_at: new Date(), last_error: null }, 5);
-      } catch (e: any) {
-        errors.push(e.message);
+
+    if (opKey) {
+      // TronNRG and burn both need an activated address. Sending TRX activates it
+      // (the operating wallet pays ~1.1 TRX once); the next tick continues from here.
+      if (!res.exists) {
+        try {
+          const r: any = await this.tronWeb.trx.sendTransaction(addr, 100_000, { privateKey: opKey });
+          if (!r?.result) throw new Error(`activation rejected: ${r?.code ?? ''}`);
+          return bought('activate', 1_200_000n, r.txid);
+        } catch (e: any) {
+          errors.push(e.message);
+        }
+      } else {
+        // 2. TronNRG: pay from the operating wallet, claim the delegation.
+        if (res.energy < estimate) {
+          const trx = tronNrgTrx(estimate);
+          const costSun = BigInt(trx) * SUN;
+          if (spentSun + costSun > this.capSun) return this.failCost(s, spentSun + costSun);
+          try {
+            const o = await tronNrgRent(this.tronWeb, opKey, addr, trx);
+            return bought('tronnrg', costSun, o.orderId);
+          } catch (e: any) {
+            errors.push(e.message);
+            if (e.paidTxId) {
+              // TRX left the wallet but no energy arrived: count it, keep the payment hash for follow-up.
+              spentSun += costSun;
+              alert('TronNRG paid but delegation not confirmed', { sweep: s.id, paymentTx: e.paidTxId, error: e.message });
+              await this.setStatus(s.id, { cost_trx: sunToTrx(spentSun), order_id: e.paidTxId }, 0);
+            }
+            log('TronNRG failed, trying burn', { sweep: s.id, error: e.message });
+          }
+        }
+
+        // 3. Burn: send the deposit address enough TRX to pay for its own energy.
+        const sendSun = burnSun - res.trxSun;
+        if (spentSun + sendSun > this.capSun) return this.failCost(s, spentSun + sendSun);
+        try {
+          const r: any = await this.tronWeb.trx.sendTransaction(addr, Number(sendSun), { privateKey: opKey });
+          if (!r?.result) throw new Error(`TRX send rejected: ${r?.code ?? ''}`);
+          return bought('burn', sendSun, r.txid);
+        } catch (e: any) {
+          errors.push(e.message);
+        }
       }
     }
+
     const error = `no_energy:${errors.join(' | ') || 'no provider configured'}`.slice(0, 500);
     // attempts was already counted by the claim above.
     if (s.attempts + 1 >= MAX_ATTEMPTS) {

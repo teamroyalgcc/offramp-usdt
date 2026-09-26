@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 
-// Energy for sweeps. Providers in order: Netts rental (prepaid, API), then burn
-// (operating wallet sends TRX to the deposit address, which burns it for energy).
-// ponytail: TronNRG (on-chain rental, no IP whitelist) not built; add it between
-// the two if the Netts whitelist cannot work from Render.
+// Energy for sweeps. Providers in order: Netts rental (prepaid, API, IP whitelist),
+// TronNRG (paid on-chain from the operating wallet, no account or whitelist), then
+// burn (operating wallet sends TRX to the deposit address, which burns it for energy).
 // No config import here, so tests can load this file without env vars.
 
 const NETTS = 'https://netts.io/apiv2';
@@ -73,6 +72,45 @@ export async function nettsRent5m(apiKey: string, receiver: string, amount: numb
     return { orderId: String(d.data.orderId), paidTrx: Number(d.data.paidTRX) };
   }
   throw new Error(`netts_${r.status}: ${r.text}`);
+}
+
+// TronNRG: https://support.tronnrg.com/en/developer-docs/api-reference/
+const TRONNRG = 'https://api.tronnrg.com';
+export const TRONNRG_PAY_TO = 'TFqUiCu1JwLHHnBNeaaVKH7Csm4aA3YhZx'; // API payment address (not the manual one)
+const TRONNRG_ENERGY_PER_TRX = 16_250;
+
+/** Whole TRX to pay TronNRG for `estimate` energy: linear 16,250 energy/TRX, minimum 4 TRX. */
+export const tronNrgTrx = (estimate: number) => Math.max(4, Math.ceil(estimate / TRONNRG_ENERGY_PER_TRX));
+
+/**
+ * Pays TronNRG from the operating wallet and claims the delegation to `receiver`.
+ * `receiver` must already be activated. Throws with `paidTxId` on the error when TRX left
+ * the wallet but the claim did not succeed (TronNRG refunds on its own failed delegations).
+ */
+export async function tronNrgRent(tronWeb: any, operatingKey: string, receiver: string, trx: number) {
+  const pay = await tronWeb.trx.sendTransaction(TRONNRG_PAY_TO, trx * 1_000_000, { privateKey: operatingKey });
+  if (!pay?.result || !pay.txid) throw new Error(`tronnrg payment rejected: ${pay?.code ?? ''}`);
+  const signature = await tronWeb.trx.signMessageV2(`${pay.txid}:${receiver}`, operatingKey);
+
+  let last = '';
+  // The payment needs a few seconds to be indexed: 404 payment_verification_failed means retry.
+  for (let i = 0; i < 8; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const res = await fetch(`${TRONNRG}/delegate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx_hash: pay.txid, delegate_to: receiver, signature }),
+      signal: AbortSignal.timeout(15_000),
+    }).catch((e) => ({ status: 0, text: async () => e.message }) as any);
+    const text = await res.text();
+    if (res.status === 200) {
+      const j = JSON.parse(text);
+      if (j.status === 'delegated') return { orderId: String(j.ref ?? pay.txid), paidTrx: trx };
+    }
+    last = `tronnrg_${res.status}: ${text.slice(0, 200)}`;
+    if (res.status !== 404 && res.status !== 429 && res.status !== 0) break;
+  }
+  throw Object.assign(new Error(last), { paidTxId: pay.txid, paidTrx: trx });
 }
 
 /** Prepaid Netts balance in TRX. */

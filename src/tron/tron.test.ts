@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { TronWeb } from 'tronweb';
 import { formatUsdt, parseUsdt } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
-import { burnSunNeeded, energyToRent, nettsIdempotencyKey, sweepDueAt } from './energy.js';
+import { burnSunNeeded, energyToRent, nettsIdempotencyKey, sweepDueAt, tronNrgTrx } from './energy.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -62,4 +62,11 @@ test('Netts idempotency key: 64 hex, stable per sweep + attempt, new per attempt
   assert.match(k, /^[a-f0-9]{64}$/);
   assert.equal(k, nettsIdempotencyKey('sweep-1', 0));
   assert.notEqual(k, nettsIdempotencyKey('sweep-1', 1));
+});
+
+test('TronNRG price: 16,250 energy per whole TRX, minimum 4 TRX', () => {
+  assert.equal(tronNrgTrx(64_285), 4);   // treasury already holds USDT
+  assert.equal(tronNrgTrx(65_001), 5);
+  assert.equal(tronNrgTrx(130_285), 9);  // empty treasury
+  assert.equal(tronNrgTrx(10_000), 4);
 });

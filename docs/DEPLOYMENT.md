@@ -45,7 +45,7 @@ You need three different wallets. Never reuse one for another.
 
    - Write it on paper and keep it with the client as a backup. It goes into Render in Step 4.
    - **Rule:** set it once, before the first real user, and never change it. The backend refuses to start if it is changed after addresses exist.
-3. **Operating wallet** (`OPERATING_WALLET_PRIVATE_KEY`). A small hot wallet that holds **TRX only, never USDT**. It pays the fallback when Netts cannot rent energy (it sends TRX to a deposit address, which burns it to move the USDT).
+3. **Operating wallet** (`OPERATING_WALLET_PRIVATE_KEY`). A small hot wallet that holds **TRX only, never USDT**. When Netts cannot rent energy, it pays TronNRG (about 4 TRX per transfer, no account needed), and as a last resort sends TRX to the deposit address to burn (about 7.5 TRX). It also pays the one-time activation (about 1.1 TRX) of a new deposit address when Netts is not used.
    - Create a new account in TronLink → export its **private key**. It goes into Render in Step 4 only.
    - Fund it with about 100 TRX. The daily check emails `ALERT_EMAIL` when it drops below `OPERATING_WALLET_MIN_TRX` (default 50).
 
