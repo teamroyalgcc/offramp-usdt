@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import configService from './configService.js';
 import complianceService from './complianceService.js';
 
-import { CACHE_MS, fetchMarketRate, MarketRate, resolveRate } from './marketRate.js';
+import { CACHE_MS, fetchMarketRate, MarketRate, resolveRate, userRate } from './marketRate.js';
 
 export class ExchangeService {
   private static instance: ExchangeService;
@@ -29,19 +29,31 @@ export class ExchangeService {
     return this.inflight;
   }
 
+  /** Everything the app and the admin Rates page show. Throws only when no rate can be given (sells pause). */
   async getRateInfo() {
-    const m = await this.marketRate();
+    const market = await this.marketRate().catch((e) => {
+      console.error('[EXCHANGE_SERVICE] market rate:', e.message);
+      return null;
+    });
     const spreadPercent = Number(configService.get('exchange_spread_percent') || 0);
+    const manualRate = Number(configService.get('manual_rate_inr')) || null;
+    const expires = configService.get('manual_rate_expires_at');
+    const manual = manualRate && expires ? { rate: manualRate, expiresAt: new Date(expires) } : null;
+    const r = userRate(market, spreadPercent, manual, Date.now());
     return {
-      rate: Number((m.rate * (1 - spreadPercent / 100)).toFixed(2)),
-      marketRate: Number(m.rate.toFixed(2)),
+      rate: Number(r.rate.toFixed(2)),
+      mode: r.mode,
+      marketRate: market ? Number(market.rate.toFixed(2)) : null,
       spreadPercent,
-      source: m.source,
-      updatedAt: new Date(m.updatedAt).toISOString(),
+      source: market?.source ?? null,
+      sources: market?.sources ?? null,
+      updatedAt: market ? new Date(market.updatedAt).toISOString() : null,
+      manualRate: r.mode === 'manual' ? manualRate : null,
+      manualRateExpiresAt: r.mode === 'manual' ? new Date(expires as string).toISOString() : null,
     };
   }
 
-  /** User rate (market minus spread). Throws when no trustworthy rate exists, which blocks sells. */
+  /** User rate. Throws when no trustworthy rate exists, which blocks sells. */
   async getLiveRate(): Promise<number> {
     return (await this.getRateInfo()).rate;
   }

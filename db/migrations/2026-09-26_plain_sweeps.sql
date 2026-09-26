@@ -21,5 +21,8 @@ ALTER TABLE public.sweeps
   ADD COLUMN IF NOT EXISTS order_id TEXT,
   ADD COLUMN IF NOT EXISTS cost_trx NUMERIC(20, 6) NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS rented_at TIMESTAMPTZ;
-ALTER TABLE public.system_settings ADD COLUMN IF NOT EXISTS pinned_treasury_address TEXT;
+ALTER TABLE public.system_settings
+  ADD COLUMN IF NOT EXISTS pinned_treasury_address TEXT,
+  ADD COLUMN IF NOT EXISTS manual_rate_inr NUMERIC CHECK (manual_rate_inr > 0),
+  ADD COLUMN IF NOT EXISTS manual_rate_expires_at TIMESTAMPTZ;
 COMMIT;

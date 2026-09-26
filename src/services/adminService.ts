@@ -473,19 +473,17 @@ export class AdminService {
     return { success: true, status: rows[0].r.status };
   }
 
-  async updateSystemSpread(spreadPercent: number, adminId: string) {
-    const { error } = await supabase
-      .from('system_settings')
-      .update({ exchange_spread_percent: spreadPercent })
-      .eq('id', 1);
-
-    if (error) throw error;
-    
-    // Also update local cache
-    await configService.loadConfig();
-
-    await this.logAction(adminId, 'UPDATE_SPREAD', 'system_settings', 'exchange_spread_percent', { spreadPercent });
-    return { success: true };
+  async updateRateSettings(input: { spreadPercent?: number; manualRate?: number | null }, adminId: string) {
+    const changes: Record<string, unknown> = {};
+    if (input.spreadPercent !== undefined) changes.exchange_spread_percent = input.spreadPercent;
+    if (input.manualRate !== undefined) {
+      changes.manual_rate_inr = input.manualRate;
+      changes.manual_rate_expires_at = input.manualRate === null ? null : new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+    }
+    if (!Object.keys(changes).length) throw new Error('Nothing to update');
+    const result = await configService.update(changes as any);
+    await this.logAction(adminId, 'UPDATE_RATE_SETTINGS', 'system_settings', 'rate', changes);
+    return result;
   }
 
   async getUsers() {

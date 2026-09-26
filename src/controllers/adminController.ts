@@ -13,8 +13,10 @@ const updateStatusSchema = z.object({
   note: z.string().optional(),
 });
 
+// A negative spread would pay users above market; manualRate = fixed user rate for 24 h, null clears it.
 const updateRateSchema = z.object({
-  spreadPercent: z.number().min(-100).max(100),
+  spreadPercent: z.number().min(0).max(10).optional(),
+  manualRate: z.number().positive().max(1000).nullable().optional(),
 });
 
 const freezeSchema = z.object({
@@ -249,8 +251,7 @@ export class AdminController extends BaseController {
       const parsed = updateRateSchema.safeParse(req.body);
       if (!parsed.success) return this.clientError(res, parsed.error.issues[0].message);
       
-      const { spreadPercent } = parsed.data;
-      const result = await adminService.updateSystemSpread(spreadPercent, req.admin.id);
+      const result = await adminService.updateRateSettings(parsed.data, req.admin.id);
       return this.ok(res, result);
     } catch (error: any) {
       return this.fail(res, error);

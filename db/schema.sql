@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS public.system_settings (
   exchanges_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   withdrawals_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   pinned_treasury_address TEXT, -- set by the deposit worker on first start; it refuses to start if TREASURY_ADDRESS differs
+  manual_rate_inr NUMERIC CHECK (manual_rate_inr > 0), -- admin override: INR users get per USDT (never above the live market)
+  manual_rate_expires_at TIMESTAMPTZ,                  -- override stops applying after this (set to +24 h)
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO public.system_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

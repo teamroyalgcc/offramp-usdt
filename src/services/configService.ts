@@ -9,6 +9,8 @@ export interface SystemConfig {
   withdrawals_enabled: boolean;
   deposits_enabled: boolean;
   exchanges_enabled: boolean;
+  manual_rate_inr: number | null;         // admin override, see marketRate.userRate
+  manual_rate_expires_at: string | null;
 }
 
 export class ConfigService {
@@ -21,7 +23,9 @@ export class ConfigService {
     min_exchange_usdt: 10,
     withdrawals_enabled: true,
     deposits_enabled: true,
-    exchanges_enabled: true
+    exchanges_enabled: true,
+    manual_rate_inr: null,
+    manual_rate_expires_at: null
   };
   private isLoaded: boolean = false;
 
@@ -74,7 +78,9 @@ export class ConfigService {
       'exchange_spread_percent',
       'withdrawals_enabled',
       'deposits_enabled',
-      'exchanges_enabled'
+      'exchanges_enabled',
+      'manual_rate_inr',
+      'manual_rate_expires_at'
     ];
 
     const cleanUpdates: Partial<SystemConfig> = {};
