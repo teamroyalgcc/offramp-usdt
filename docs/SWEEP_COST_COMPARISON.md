@@ -1,6 +1,6 @@
 # Sweep cost comparison (deposit address → treasury)
 
-Status: **research, decision pending.** Written 2026-09-26. The code on `main` still uses GasFree.
+Status: **decided 2026-09-26: rented energy via Netts (<https://doc.netts.io/>), GasFree dropped, users pay the real-time sweep cost as the processing fee.** Implementation plan: `work/CLAUDE.md` → NEXT. The code on `main` still uses GasFree until that lands.
 
 **The problem.** The user already paid a network fee to send USDT to their deposit address. A second transfer (the sweep to treasury) should not cost them again. The platform paying GasFree's 1.5 USDT per sweep is too heavy. We need a cheaper way to sweep.
 
