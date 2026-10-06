@@ -88,9 +88,10 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    - Go to <https://www.brevo.com> → sign up.
    - Senders → add and verify the sender address, for example `support@yourdomain.com` or a Gmail address. This is `EMAIL_FROM`.
    - SMTP & API → **API Keys** → Generate. This is `BREVO_API_KEY`.
-4. **Google sign-in (optional; email OTP works without it).**
-   - Go to <https://console.cloud.google.com> → APIs & Services → Credentials → Create **OAuth client ID** → type **Web application**. Its client ID is both `GOOGLE_CLIENT_ID` (backend) and `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (app).
-   - Create a second OAuth client of type **Android**, with package `com.fintech_v3` and the SHA-1 from Step 9.3. This is `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`.
+4. **Google sign-in (optional; email OTP works without it).** While `GOOGLE_CLIENT_ID` is unset, the backend refuses Google sign-in (fail closed).
+   - Go to <https://console.cloud.google.com> → APIs & Services → Credentials → Create **OAuth client ID** → type **Web application**. This is `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (app).
+   - Create a second OAuth client of type **Android**, with the app's package name and the SHA-1 from Step 9.3. This is `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`.
+   - Backend `GOOGLE_CLIENT_ID` = both IDs, comma-separated: `<web id>,<android id>`. Only tokens issued to these IDs, with a verified email, are accepted.
 5. **Generate the login secret:**
 
    ```bash
@@ -128,7 +129,7 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    | `BREVO_API_KEY` | from Step 3 |
    | `EMAIL_FROM` | verified Brevo sender |
    | `ALERT_EMAIL` | the client's email for daily problem alerts |
-   | `GOOGLE_CLIENT_ID` | from Step 3 (optional) |
+   | `GOOGLE_CLIENT_ID` | from Step 3: `<web id>,<android id>` (optional; unset = Google sign-in off) |
 
    Do **not** set `SYSTEM_PRIVATE_KEY`. It is no longer used.
 4. **Deploy.** In the logs, wait for:

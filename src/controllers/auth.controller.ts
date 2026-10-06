@@ -5,6 +5,7 @@ import supabase from '../utils/supabase.js';
 import { sendOTPEmail } from '../utils/email.js';
 import { auditService } from '../services/auditService.js';
 import { checkPin, hashPin, isValidPin } from '../utils/pin.js';
+import { googleAudiences } from '../utils/google.js';
 
 // ponytail: in-memory, single instance. Move to the DB if the API ever runs more than one instance.
 const otpFailures = new Map<string, number>();
@@ -25,9 +26,10 @@ export class AuthController {
     try {
       const { id_token } = req.body;
       if (!id_token) return res.status(400).json({ error: 'id_token is required' });
+      if (!googleAudiences().length) return res.status(503).json({ error: 'Google sign-in is not available. Use email login.' });
 
-      const payload = await AuthService.verifyGoogleToken(id_token);
-      if (!payload || !payload.email) return res.status(400).json({ error: 'Invalid Google token or missing email payload.' });
+      const payload = await AuthService.verifyGoogleToken(id_token).catch(() => null);
+      if (!payload || !payload.email) return res.status(401).json({ error: 'Invalid Google token or unverified email.' });
 
       const email = payload.email.toLowerCase();
       const google_id = payload.sub;

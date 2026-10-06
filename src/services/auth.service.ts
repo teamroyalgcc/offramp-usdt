@@ -1,19 +1,11 @@
-import { OAuth2Client } from 'google-auth-library';
 import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { checkPin } from '../utils/pin.js';
-
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+import { verifyGoogleToken } from '../utils/google.js';
 
 export class AuthService {
-  static async verifyGoogleToken(idToken: string) {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    return ticket.getPayload();
-  }
+  static verifyGoogleToken = verifyGoogleToken;
 
   static async findUserByEmail(email: string) {
     const { data: user, error } = await supabase
