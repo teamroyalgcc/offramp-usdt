@@ -9,6 +9,7 @@ const pool = new Pool({
   max: 5, // Supabase free-tier poolers allow few connections
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
+  query_timeout: 60000, // client-side, so a hung query cannot freeze the worker loop (the pooler may not accept statement_timeout)
 });
 
 // The pooler drops idle connections now and then; the pool replaces them. Do not exit.

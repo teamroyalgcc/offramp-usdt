@@ -19,6 +19,7 @@ import { adminAuth } from './middleware/adminAuth.js';
 import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
 import supabase from './utils/supabase.js';
+import { query } from './utils/db.js';
 import depositWorker from './workers/depositWorker.js';
 
 const app = express();
@@ -38,6 +39,10 @@ app.get('/health', async (req, res) => {
   try {
     const { data, error } = await supabase.from('system_settings').select('id').limit(1).maybeSingle();
     if (error) throw error;
+    await query('SELECT 1'); // the worker's own pg pool
+    // ponytail: 10 min, since the daily audit tick checks every address on-chain; lower it if that stays fast.
+    const workerAgeSec = Math.round((Date.now() - depositWorker.lastTickAt) / 1000);
+    if (workerAgeSec > 600) throw new Error(`deposit worker has not finished a tick for ${workerAgeSec}s`);
     res.json({ 
       status: 'ok', 
       db: 'connected',

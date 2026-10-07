@@ -27,6 +27,17 @@ export function sweepDueAt(balanceRaw: bigint, immediateRaw: bigint, openedAt: D
   return balanceRaw >= immediateRaw ? new Date(0) : new Date(openedAt.getTime() + 24 * 60 * 60_000);
 }
 
+/**
+ * Next deposit poll: every 15 s while the deposit screen is open (hot_until), then every 6 h for 7 days
+ * to catch late deposits, then never. The daily audit still compares every address balance.
+ */
+export function nextPollAt(now: Date, hotUntil: Date | null): Date | 'infinity' {
+  const hot = hotUntil?.getTime() ?? 0;
+  if (hot > now.getTime()) return new Date(now.getTime() + 15_000);
+  if (now.getTime() < hot + 7 * 24 * 3600_000) return new Date(now.getTime() + 6 * 3600_000);
+  return 'infinity';
+}
+
 /** Errors in a row after which a stuck sweep is emailed to the admin. It keeps retrying. */
 export const SWEEP_STUCK_ERRORS = 10;
 

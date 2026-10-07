@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { TronWeb } from 'tronweb';
 import { formatUsdt, parseUsdt } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
-import { burnSunNeeded, energyToRent, nettsIdempotencyKey, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, tronNrgTrx } from './energy.js';
+import { burnSunNeeded, energyToRent, nettsIdempotencyKey, nextPollAt, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, tronNrgTrx } from './energy.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -77,4 +77,12 @@ test('sweep step errors back off to 1 h and alert once stuck', () => {
   let t = 0;
   for (let e = 1; e < SWEEP_STUCK_ERRORS; e++) t += sweepErrorDelaySec(e);
   assert.ok(t < 12 * 3600);
+});
+
+test('deposit polling: fast while watched, 6 h for 7 days after, then stops', () => {
+  const now = new Date('2026-10-08T00:00:00Z'), h = 3600_000;
+  assert.equal((nextPollAt(now, new Date(now.getTime() + h)) as Date).getTime() - now.getTime(), 15_000);
+  assert.equal((nextPollAt(now, new Date(now.getTime() - 6 * 24 * h)) as Date).getTime() - now.getTime(), 6 * h);
+  assert.equal(nextPollAt(now, new Date(now.getTime() - 8 * 24 * h)), 'infinity');
+  assert.equal(nextPollAt(now, null), 'infinity');
 });

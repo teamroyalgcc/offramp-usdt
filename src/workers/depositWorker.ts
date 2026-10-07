@@ -2,7 +2,7 @@ import { TronWeb } from 'tronweb';
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { burnSunNeeded, currentEgressIp, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
+import { burnSunNeeded, currentEgressIp, nextPollAt, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -27,7 +27,6 @@ import { sendEmail } from '../utils/email.js';
 
 const NETWORK = config.tron.network;
 const USDT = config.tron.usdtContract;
-const WATCH_POLL_MS = 15_000;
 const RESCAN_OVERLAP_MS = 2 * 60 * 60_000; // re-reads recent history to cover indexer lag
 const TICK_MS = 5_000;
 const MAX_ATTEMPTS = 5;
@@ -61,6 +60,8 @@ export class DepositWorker {
     headers: config.tron.proApiKey ? { 'TRON-PRO-API-KEY': config.tron.proApiKey } : {},
   });
   private running = false;
+  /** Last tick that finished without error; /health reports 503 when it is stale. */
+  lastTickAt = Date.now();
   private minRaw = parseUsdt(config.sweep.minDepositUsdt);
   private immediateRaw = parseUsdt(config.sweep.immediateUsdt);
   private capSun = BigInt(Math.round(config.sweep.maxCostTrx * 1e6));
@@ -125,6 +126,7 @@ export class DepositWorker {
         await this.pollDueAddresses();
         await this.processSweeps();
         await this.dailyAudit();
+        this.lastTickAt = Date.now();
       } catch (e: any) {
         alert('tick failed', { error: e.message });
       }
@@ -153,7 +155,6 @@ export class DepositWorker {
 
   private async pollAddress(a: any) {
     const startedAt = new Date();
-    const watching = a.hot_until && new Date(a.hot_until) > startedAt;
     const since = Math.max(
       new Date(a.created_at).getTime(),
       a.last_polled_at ? new Date(a.last_polled_at).getTime() - RESCAN_OVERLAP_MS : 0,
@@ -169,10 +170,9 @@ export class DepositWorker {
         await this.record(a.id, t);
       }
     }
-    // Outside the watch window the address sleeps until the user opens the deposit screen again.
     await query(
       `UPDATE deposit_addresses SET last_polled_at = $2, next_poll_at = $3 WHERE id = $1`,
-      [a.id, startedAt, watching ? new Date(startedAt.getTime() + WATCH_POLL_MS) : 'infinity'],
+      [a.id, startedAt, nextPollAt(startedAt, a.hot_until ? new Date(a.hot_until) : null)],
     );
   }
 
@@ -488,7 +488,12 @@ export class DepositWorker {
     const issues: Record<string, unknown>[] = [];
     for (const a of addrs) {
       const onChain = await this.chain.usdtBalance(USDT, a.tron_address);
-      const diff = onChain - (BigInt(a.received) - BigInt(a.swept));
+      let diff = onChain - (BigInt(a.received) - BigInt(a.swept));
+      // Funds we have no record of: rescan the address first, so a late deposit is credited instead of only reported.
+      if (diff > 0n && (await this.scanNow(a.id).catch(() => ({ newDeposits: 0 }))).newDeposits) {
+        const { rows } = await query(`SELECT COALESCE(SUM(amount_raw), 0) AS r FROM deposits WHERE deposit_address_id = $1`, [a.id]);
+        diff = onChain - (BigInt(rows[0].r) - BigInt(a.swept));
+      }
       if (diff > 0n) {
         issues.push({ kind: 'unrecorded_funds', depositAddressId: a.id, userId: a.user_id, address: a.tron_address, amount: formatUsdt(diff) });
       } else if (diff < 0n && !a.sweep_open) {
