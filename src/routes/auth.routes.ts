@@ -30,9 +30,11 @@ router.get('/me', authenticate, AuthController.me);
 
 /**
  * @route   GET /api/auth/pin/status  -> { hasPin }
- * @route   POST /api/auth/pin        body { pin, currentPin? }: set or change the 6-digit transaction PIN
+ * @route   POST /api/auth/pin/send-code  emails a code for the first PIN or a forgotten PIN
+ * @route   POST /api/auth/pin        body { pin, currentPin } to change, or { pin, emailCode } to set/reset
  */
 router.get('/pin/status', authenticate, AuthController.pinStatus);
+router.post('/pin/send-code', authenticate, AuthController.sendPinCode);
 router.post('/pin', authenticate, AuthController.setPin);
 
 export default router;

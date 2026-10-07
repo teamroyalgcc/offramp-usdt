@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS public.users (
   email_verification_token TEXT,
   password_hash TEXT,
   transaction_pin_hash TEXT,    -- bcrypt of the 6-digit PIN that confirms sell orders and withdrawals
-  pin_reset_until TIMESTAMPTZ,  -- set by a fresh email OTP login: PIN can be reset without the old one until then
+  pin_failures INTEGER NOT NULL DEFAULT 0, -- wrong PIN / PIN email code guesses since the last success (begin_pin_attempt)
+  pin_locked_until TIMESTAMPTZ,  -- 5 wrong guesses lock money-out and PIN changes for 15 minutes
+  pin_code_hash TEXT,            -- bcrypt of the emailed code that sets the first PIN or resets a forgotten one
+  pin_code_expires TIMESTAMPTZ,
+  pin_hold_until TIMESTAMPTZ,    -- sells and withdrawals are blocked until then after a forgot-PIN reset (24 h)
   google_id TEXT,
   auth_provider TEXT,
   account_holder_name TEXT,
@@ -43,6 +47,28 @@ CREATE TABLE IF NOT EXISTS public.users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_users_kyc_status ON public.users (kyc_status);
+
+-- PIN guess counter. Counted atomically BEFORE the bcrypt compare, so parallel guesses
+-- cannot slip past the limit. Returns this attempt's number (1, 2, ...), or 0 while locked.
+CREATE OR REPLACE FUNCTION public.begin_pin_attempt(p_user_id UUID) RETURNS INTEGER
+LANGUAGE sql AS $$
+  UPDATE public.users SET
+    pin_failures = CASE WHEN pin_locked_until > NOW() THEN pin_failures
+                        WHEN pin_locked_until IS NOT NULL THEN 1 ELSE pin_failures + 1 END,
+    pin_locked_until = CASE WHEN pin_locked_until > NOW() THEN pin_locked_until END
+  WHERE id = p_user_id
+  RETURNING CASE WHEN pin_locked_until > NOW() THEN 0 ELSE pin_failures END
+$$;
+
+-- Success clears the counter; a wrong guess at or past p_max starts the lock.
+CREATE OR REPLACE FUNCTION public.end_pin_attempt(p_user_id UUID, p_ok BOOLEAN, p_max INTEGER, p_lock_minutes INTEGER)
+RETURNS VOID LANGUAGE sql AS $$
+  UPDATE public.users SET
+    pin_failures = CASE WHEN p_ok THEN 0 ELSE pin_failures END,
+    pin_locked_until = CASE WHEN NOT p_ok AND pin_failures >= p_max
+                            THEN NOW() + make_interval(mins => p_lock_minutes) ELSE pin_locked_until END
+  WHERE id = p_user_id
+$$;
 
 -- Admin panel logins. Create the first superadmin by hand (docs/DEPLOYMENT.md step 2):
 --   INSERT INTO admins (username, password_hash, role)
@@ -505,7 +531,7 @@ BEGIN
       'fail_withdrawal(uuid,numeric,uuid)','create_exchange_order(uuid,numeric,numeric,numeric,uuid,text)',
       'complete_exchange_order(uuid,boolean,text)','next_derivation_index()',
       'record_deposit(text,uuid,text,integer,text,numeric,bigint,timestamptz,numeric)',
-      'credit_held_deposit(uuid)'] LOOP
+      'credit_held_deposit(uuid)','begin_pin_attempt(uuid)','end_pin_attempt(uuid,boolean,integer,integer)'] LOOP
       EXECUTE format('REVOKE EXECUTE ON FUNCTION public.%s FROM PUBLIC, anon, authenticated', f);
     END LOOP;
   END IF;

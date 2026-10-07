@@ -139,6 +139,6 @@ Settings:
 
 - **Run exactly one backend instance.** A second one would not double-spend, but it would waste TronGrid quota. The OTP attempt counter is also in memory.
 - **A crash between two Transfer logs of the same multi-transfer transaction** would skip the second log until the daily audit flags it. "Check again" then records it.
-- **Transaction PIN.** Sell orders and USDT withdrawals need the user's 6-digit PIN (`users.transaction_pin_hash`, bcrypt). Five wrong PINs lock money-out for 15 minutes (in memory, one instance). Forgot PIN: a fresh email-code login allows a new PIN without the old one for 10 minutes (`users.pin_reset_until`). Admins never see PIN hashes.
+- **Transaction PIN.** Sell orders and USDT withdrawals need the user's 6-digit PIN (`users.transaction_pin_hash`, bcrypt). Five wrong guesses lock money-out for 15 minutes (counter in the DB: `begin_pin_attempt` / `end_pin_attempt`, safe across restarts and parallel requests). Setting the first PIN or a forgotten one needs a separate emailed PIN code (`POST /api/auth/pin/send-code`, bcrypt, 10 min); a forgot-PIN reset blocks sells and withdrawals for 24 h (`users.pin_hold_until`). Admins never see PIN hashes.
 - **Statement.** `GET /api/wallet/statement` returns the user's `available` ledger rows, newest first, with a readable label and the balance after each change. The app shows it under History → Statement.
 - **After launch:** invite code / team commissions (the rules are not defined yet) and splitting a payout across banks.

@@ -4,7 +4,9 @@ import { generateToken } from '../utils/jwt.js';
 import supabase from '../utils/supabase.js';
 import { sendOTPEmail } from '../utils/email.js';
 import { auditService } from '../services/auditService.js';
-import { checkPin, hashPin, isValidPin } from '../utils/pin.js';
+import { randomInt } from 'node:crypto';
+import { checkPin, hashPin, isValidPin, PIN_RESET_HOLD_MS } from '../utils/pin.js';
+import { pinCounter } from '../services/auth.service.js';
 import { googleAudiences } from '../utils/google.js';
 
 // ponytail: in-memory, single instance. Move to the DB if the API ever runs more than one instance.
@@ -218,8 +220,6 @@ export class AuthController {
           email_verified: true,
           email_otp: null,
           email_otp_expires: null,
-          // "Forgot PIN": proving email access lets the user set a new PIN without the old one for 10 minutes.
-          pin_reset_until: new Date(Date.now() + 10 * 60 * 1000).toISOString()
         })
         .eq('id', user.id);
 
@@ -261,33 +261,81 @@ export class AuthController {
     }
   }
 
-  // Body { pin, currentPin? }. currentPin is required to change an existing PIN,
-  // unless the user just verified an email OTP (forgot PIN).
+  // Emails a 6-digit code that sets the first PIN or resets a forgotten one (POST /auth/pin with emailCode).
+  // A login code never resets the PIN: that needs this separate code.
+  static async sendPinCode(req: Request, res: Response): Promise<any> {
+    try {
+      const userId = (req as any).user.id;
+      const { data: user, error } = await supabase.from('users').select('email, pin_code_expires').eq('id', userId).single();
+      if (error) throw error;
+      if (!user.email) return res.status(400).json({ error: 'Your account has no email address.' });
+      // Codes live 10 minutes, so "expires in more than 9" means one was sent less than a minute ago.
+      if (user.pin_code_expires && new Date(user.pin_code_expires).getTime() - Date.now() > 9 * 60 * 1000) {
+        return res.status(429).json({ error: 'Please wait a minute before asking for another code.' });
+      }
+
+      const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+      const { error: updateError } = await supabase.from('users').update({
+        pin_code_hash: await hashPin(code),
+        pin_code_expires: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      }).eq('id', userId);
+      if (updateError) throw updateError;
+
+      try {
+        await sendOTPEmail(user.email, code);
+      } catch (mailError: any) {
+        console.error('[EMAIL_SERVICE_FAILURE] PIN code:', mailError.message);
+        return res.status(503).json({ error: 'Email delivery service temporarily unavailable. Please try again later.' });
+      }
+      await auditService.log('user', userId, 'PIN_CODE_SENT', userId, {}, req.ip);
+      return res.status(200).json({ success: true, email: user.email });
+    } catch (error: any) {
+      console.error('Send PIN Code Error:', error);
+      return res.status(500).json({ error: 'Internal server error.' });
+    }
+  }
+
+  // Body { pin, currentPin } to change the PIN, or { pin, emailCode } to set the first PIN or reset a
+  // forgotten one. A reset blocks sells and withdrawals for 24 h, so a stolen mailbox can't drain at once.
   static async setPin(req: Request, res: Response): Promise<any> {
     try {
       const userId = (req as any).user.id;
-      const { pin, currentPin } = req.body ?? {};
+      const { pin, currentPin, emailCode } = req.body ?? {};
       if (!isValidPin(pin)) return res.status(400).json({ error: 'The PIN must be exactly 6 digits.' });
 
       const { data: user, error } = await supabase
-        .from('users').select('transaction_pin_hash, pin_reset_until').eq('id', userId).single();
+        .from('users').select('transaction_pin_hash, pin_code_hash, pin_code_expires').eq('id', userId).single();
       if (error) throw error;
 
-      const resetAllowed = user.pin_reset_until && new Date(user.pin_reset_until) > new Date();
-      if (user.transaction_pin_hash && !resetAllowed) {
-        if (currentPin === undefined) {
-          return res.status(400).json({ error: 'Enter your current PIN. Forgot it? Log in again with an email code to reset it.' });
-        }
-        const pinError = await checkPin(userId, currentPin, user.transaction_pin_hash);
+      const viaCode = currentPin === undefined;
+      if (!viaCode) {
+        if (!user.transaction_pin_hash) return res.status(400).json({ error: 'Use the email code to set your first PIN.' });
+        const pinError = await checkPin(pinCounter, userId, currentPin, user.transaction_pin_hash);
         if (pinError) return res.status(401).json({ error: pinError });
+      } else {
+        if (emailCode === undefined) {
+          return res.status(400).json({ error: 'Enter your current PIN, or ask for an email code (Forgot PIN).' });
+        }
+        if (!user.pin_code_hash || new Date(user.pin_code_expires) <= new Date()) {
+          return res.status(401).json({ error: 'The email code has expired. Please ask for a new one.' });
+        }
+        const codeError = await checkPin(pinCounter, userId, emailCode, user.pin_code_hash, 'email code');
+        if (codeError) return res.status(401).json({ error: codeError });
       }
 
-      const { error: updateError } = await supabase
-        .from('users').update({ transaction_pin_hash: await hashPin(pin), pin_reset_until: null }).eq('id', userId);
+      const reset = viaCode && !!user.transaction_pin_hash;
+      const holdUntil = reset ? new Date(Date.now() + PIN_RESET_HOLD_MS).toISOString() : undefined;
+      const { error: updateError } = await supabase.from('users').update({
+        transaction_pin_hash: await hashPin(pin),
+        pin_code_hash: null,
+        pin_code_expires: null,
+        ...(holdUntil && { pin_hold_until: holdUntil }),
+      }).eq('id', userId);
       if (updateError) throw updateError;
 
-      await auditService.log('user', userId, user.transaction_pin_hash ? 'PIN_CHANGED' : 'PIN_SET', userId, { via_reset: !!resetAllowed }, req.ip);
-      return res.status(200).json({ success: true, hasPin: true });
+      const action = !user.transaction_pin_hash ? 'PIN_SET' : reset ? 'PIN_RESET' : 'PIN_CHANGED';
+      await auditService.log('user', userId, action, userId, {}, req.ip);
+      return res.status(200).json({ success: true, hasPin: true, holdUntil: holdUntil ?? null });
     } catch (error: any) {
       console.error('Set PIN Error:', error);
       return res.status(500).json({ error: 'Internal server error.' });

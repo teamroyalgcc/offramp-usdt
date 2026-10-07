@@ -1,7 +1,7 @@
 import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { checkPin } from '../utils/pin.js';
+import { checkPin, MAX_PIN_FAILURES, PIN_LOCK_MINUTES, PinCounter } from '../utils/pin.js';
 import { verifyGoogleToken } from '../utils/google.js';
 
 export class AuthService {
@@ -47,8 +47,26 @@ export class AuthService {
 
   // Money-out guard. Returns null when the transaction PIN is correct, otherwise the message to show.
   static async verifyTransactionPin(userId: string, pin: unknown) {
-    const { data, error } = await supabase.from('users').select('transaction_pin_hash').eq('id', userId).single();
+    const { data, error } = await supabase.from('users').select('transaction_pin_hash, pin_hold_until').eq('id', userId).single();
     if (error) throw error;
-    return checkPin(userId, pin, data.transaction_pin_hash);
+    if (data.pin_hold_until && new Date(data.pin_hold_until) > new Date()) {
+      const until = new Date(data.pin_hold_until).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      return `Your PIN was reset recently. For your safety, sells and withdrawals unlock at ${until} IST.`;
+    }
+    return checkPin(pinCounter, userId, pin, data.transaction_pin_hash);
   }
 }
+
+export const pinCounter: PinCounter = {
+  begin: async (userId) => {
+    const { data, error } = await supabase.rpc('begin_pin_attempt', { p_user_id: userId });
+    if (error) throw error;
+    return data ?? 0;
+  },
+  end: async (userId, ok) => {
+    const { error } = await supabase.rpc('end_pin_attempt', {
+      p_user_id: userId, p_ok: ok, p_max: MAX_PIN_FAILURES, p_lock_minutes: PIN_LOCK_MINUTES,
+    });
+    if (error) throw error;
+  },
+};
