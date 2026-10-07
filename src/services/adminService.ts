@@ -8,6 +8,7 @@ import config from '../config/index.js';
 import tronService from './tronService.js';
 
 import configService from './configService.js';
+import exchangeService from './exchangeService.js';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../utils/db.js';
 import depositWorker from '../workers/depositWorker.js';
@@ -217,6 +218,14 @@ export class AdminService {
     
     if (!requester || requester.role !== 'superadmin') {
       throw new Error('Permission denied');
+    }
+
+    const { data: target } = await supabase.from('admins').select('role').eq('id', targetAdminId).maybeSingle();
+    if (!target) throw new Error('Admin not found');
+    if (targetAdminId === requesterAdminId) throw new Error('You cannot delete your own account');
+    if (target.role === 'superadmin') {
+      const { count } = await supabase.from('admins').select('id', { count: 'exact', head: true }).eq('role', 'superadmin');
+      if ((count ?? 0) <= 1) throw new Error('Cannot delete the last superadmin');
     }
 
     const { error } = await supabase
@@ -476,6 +485,13 @@ export class AdminService {
   async updateRateSettings(input: { spreadPercent?: number; manualRate?: number | null }, adminId: string) {
     const changes: Record<string, unknown> = {};
     if (input.spreadPercent !== undefined) changes.exchange_spread_percent = input.spreadPercent;
+    if (input.manualRate != null) {
+      // Bound a fat-finger: within 10% under the live market (it is never used above it anyway).
+      const { marketRate } = await exchangeService.getRateInfo().catch(() => ({ marketRate: null }));
+      if (marketRate && (input.manualRate < marketRate * 0.9 || input.manualRate > marketRate)) {
+        throw new Error(`Manual rate must be between ${(marketRate * 0.9).toFixed(2)} and ${marketRate.toFixed(2)} (live market ${marketRate.toFixed(2)})`);
+      }
+    }
     if (input.manualRate !== undefined) {
       changes.manual_rate_inr = input.manualRate;
       changes.manual_rate_expires_at = input.manualRate === null ? null : new Date(Date.now() + 24 * 60 * 60_000).toISOString();
@@ -503,13 +519,15 @@ export class AdminService {
     const { data, error } = await supabase
       .from('audit_logs')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(1000);
     if (error) throw error;
     return data;
   }
 
-  private async logAction(adminId: string, action: string, entityType: string, entityId: string, metadata: any = {}) {
-    await supabase.from('audit_logs').insert({
+  // The action already happened, so a failed audit insert is logged loudly instead of failing the request.
+  async logAction(adminId: string, action: string, entityType: string, entityId: string, metadata: any = {}) {
+    const { error } = await supabase.from('audit_logs').insert({
       user_id: adminId,
       action,
       entity_type: entityType,
@@ -517,6 +535,7 @@ export class AdminService {
       new_values: metadata,
       created_at: new Date().toISOString()
     });
+    if (error) console.error('[AUDIT_LOG_FAILED]', JSON.stringify({ adminId, action, entityType, entityId, error: error.message }));
   }
 }
 

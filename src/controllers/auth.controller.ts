@@ -129,12 +129,16 @@ export class AuthController {
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 mins
 
       const user = await AuthService.findUserByEmail(normalizedEmail);
+      // Codes live 10 minutes, so "expires in more than 9" means one was sent less than a minute ago.
+      if (user?.email_otp_expires && new Date(user.email_otp_expires).getTime() - Date.now() > 9 * 60 * 1000) {
+        return res.status(429).json({ error: 'Please wait a minute before asking for another code.' });
+      }
 
       if (user) {
         // User exists, update OTP for login
         const { error } = await supabase
           .from('users')
-          .update({ email_otp: otp, email_otp_expires: otpExpires })
+          .update({ email_otp: AuthService.hashOTP(normalizedEmail, otp), email_otp_expires: otpExpires })
           .eq('id', user.id);
         if (error) throw error;
         await auditService.log('user', user.id, 'OTP_REQUESTED_LOGIN', user.id, {}, req.ip);
@@ -144,7 +148,7 @@ export class AuthController {
           .from('users')
           .insert([{
             email: normalizedEmail,
-            email_otp: otp,
+            email_otp: AuthService.hashOTP(normalizedEmail, otp),
             email_otp_expires: otpExpires,
             email_verified: false,
             auth_provider: 'email',
@@ -192,7 +196,7 @@ export class AuthController {
         .from('users')
         .select('*')
         .eq('email', normalizedEmail)
-        .eq('email_otp', otp)
+        .eq('email_otp', AuthService.hashOTP(normalizedEmail, String(otp)))
         .maybeSingle();
 
       if (error || !user) {

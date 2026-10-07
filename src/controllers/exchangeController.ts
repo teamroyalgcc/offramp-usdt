@@ -4,9 +4,10 @@ import exchangeService from '../services/exchangeService.js';
 import { AuthRequest } from '../middleware/authMiddleware.js';
 import { z } from 'zod';
 import { AuthService } from '../services/auth.service.js';
+import { idempotencyKey } from '../middleware/authMiddleware.js';
 
 const createOrderSchema = z.object({
-  usdtAmount: z.number().positive(),
+  usdtAmount: z.union([z.number().positive(), z.string()]).transform(String),
   bankAccountId: z.string().uuid(),
 });
 
@@ -34,7 +35,8 @@ export class ExchangeController extends BaseController {
       const result = await exchangeService.createExchangeOrder(
         req.user.id,
         parsed.data.usdtAmount,
-        parsed.data.bankAccountId
+        parsed.data.bankAccountId,
+        idempotencyKey(req)
       );
 
       return this.created(res, result);

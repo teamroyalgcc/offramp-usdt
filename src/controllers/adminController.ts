@@ -25,12 +25,12 @@ const freezeSchema = z.object({
 
 const updateAdminSchema = z.object({
   username: z.string().optional(),
-  password: z.string().min(6).optional(),
+  password: z.string().min(12, 'Password must be at least 12 characters').optional(),
 });
 
 const addAdminSchema = z.object({
   username: z.string().min(3),
-  password: z.string().min(6),
+  password: z.string().min(12, 'Password must be at least 12 characters'),
   role: z.enum(['superadmin', 'admin', 'staff']).default('admin'),
 });
 

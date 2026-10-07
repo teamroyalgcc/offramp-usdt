@@ -1,5 +1,6 @@
 import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
+import { createHash, randomInt } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { checkPin, MAX_PIN_FAILURES, PIN_LOCK_MINUTES, PinCounter } from '../utils/pin.js';
 import { verifyGoogleToken } from '../utils/google.js';
@@ -42,7 +43,12 @@ export class AuthService {
   }
 
   static generateOTP() {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(0, 1_000_000).toString().padStart(6, '0');
+  }
+
+  /** Login codes are stored hashed (users.email_otp), so a DB read doesn't hand out live codes. */
+  static hashOTP(email: string, otp: string) {
+    return createHash('sha256').update(`${email}:${otp}`).digest('hex');
   }
 
   // Money-out guard. Returns null when the transaction PIN is correct, otherwise the message to show.

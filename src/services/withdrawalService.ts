@@ -1,9 +1,7 @@
 import supabase from '../utils/supabase.js';
-import configService from './configService.js';
-import { v4 as uuidv4 } from 'uuid';
 import config from '../config/index.js';
 import { TronChain } from '../tron/chain.js';
-import { parseUsdt } from '../tron/usdt.js';
+import { formatUsdt, parseUsdt, payoutError } from '../tron/usdt.js';
 
 const chain = new TronChain({
   fullNode: config.tron.fullNode,
@@ -11,86 +9,22 @@ const chain = new TronChain({
   apiKey: config.tron.proApiKey,
 });
 
-/** Moves a pending withdrawal to a final status exactly once; returns the row or throws. */
-async function closeWithdrawal(id: string, fields: Record<string, unknown>) {
-  const { data, error } = await supabase
-    .from('usdt_withdrawals')
-    .update({ ...fields, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .in('status', ['pending', 'processing'])
-    .select()
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('Withdrawal not found or already completed/rejected');
-  return data;
-}
-
 export class WithdrawalService {
+  /** Pause flag, minimum, fee, daily limit, fund lock and insert all happen in one SQL transaction. */
   async requestUSDTWithdrawal(userId: string, data: {
     destination_address: string;
-    usdt_amount: number;
+    usdt_amount: string;
+    idempotency_key: string;
   }) {
-    try {
-      if (!configService.get('withdrawals_enabled')) {
-        throw new Error('Withdrawals are currently paused');
-      }
-
-      const minWithdrawal = configService.get('min_usdt_withdrawal') || 20;
-      if (data.usdt_amount < minWithdrawal) {
-        throw new Error(`Minimum withdrawal amount is ${minWithdrawal} USDT`);
-      }
-
-      const fee = configService.get('usdt_withdrawal_fee') || 5;
-      const netAmount = data.usdt_amount - fee;
-
-      if (netAmount <= 0) {
-        throw new Error('Withdrawal amount too low after fees');
-      }
-
-      const withdrawalId = uuidv4();
-      
-      // 1. Lock funds using RPC (Atomic operation)
-      const { data: lockResult, error: lockError } = await supabase.rpc('lock_funds', {
-        p_user_id: userId,
-        p_amount: data.usdt_amount,
-        p_ref_id: withdrawalId,
-        p_description: `USDT Withdrawal to ${data.destination_address}`
-      });
-
-      if (lockError) throw lockError;
-      if (!lockResult.success) throw new Error(lockResult.message);
-
-      // 2. Create withdrawal record
-      const { data: withdrawal, error: createError } = await supabase
-        .from('usdt_withdrawals')
-        .insert({
-          id: withdrawalId,
-          user_id: userId,
-          destination_address: data.destination_address,
-          usdt_amount: data.usdt_amount,
-          fee: fee,
-          net_amount: netAmount,
-          status: 'pending',
-          idempotency_key: `WD_${userId}_${Date.now()}` // for client retries
-        })
-        .select()
-        .single();
-
-      if (createError) {
-        // Refund if record creation fails
-        await supabase.rpc('fail_withdrawal', {
-          p_user_id: userId,
-          p_amount: data.usdt_amount,
-          p_withdrawal_id: uuidv4() // placeholder
-        });
-        throw createError;
-      }
-
-      return withdrawal;
-    } catch (error: any) {
-      console.error('[WITHDRAWAL_SERVICE] Request failed:', error.message);
-      throw error;
-    }
+    const { data: r, error } = await supabase.rpc('request_withdrawal', {
+      p_user_id: userId,
+      p_amount: formatUsdt(parseUsdt(data.usdt_amount)), // exact 6-decimal string, never a float
+      p_destination: data.destination_address,
+      p_idempotency_key: `${userId}:${data.idempotency_key}`,
+    });
+    if (error) throw error;
+    if (!r.success) throw new Error(r.message);
+    return r.withdrawal;
   }
 
   async getWithdrawalHistory(userId: string) {
@@ -128,33 +62,22 @@ export class WithdrawalService {
     const { count } = await supabase.from('usdt_withdrawals').select('id', { count: 'exact', head: true }).eq('tx_hash', hash);
     if (count) throw new Error('This transaction hash is already used for another withdrawal');
 
-    const expected = parseUsdt(String(w.net_amount));
     const logs = await chain.solidTransfersTo(hash, config.tron.usdtContract, w.destination_address);
-    const paid = logs.reduce((sum, l) => sum + l.amountRaw, 0n);
-    if (!logs.length) {
-      throw new Error('Transaction not found, not final yet, or not a USDT payment to the user\'s address. Wait a minute and try again.');
-    }
-    if (paid !== expected) {
-      throw new Error(`Transaction pays ${Number(paid) / 1e6} USDT but this withdrawal needs exactly ${w.net_amount} USDT.`);
-    }
-
-    await closeWithdrawal(id, { status: 'completed', tx_hash: hash });
-    await supabase.rpc('finalize_withdrawal', {
-      p_user_id: w.user_id,
-      p_amount: w.usdt_amount,
-      p_withdrawal_id: id
+    const problem = payoutError(logs, {
+      treasury: config.treasuryAddress, // pinned in the DB; the worker refuses to start if it differs
+      expected: parseUsdt(String(w.net_amount)),
+      createdAt: new Date(w.created_at),
     });
-    return true;
+    if (problem) throw new Error(problem);
+
+    const { error: rpcError } = await supabase.rpc('complete_withdrawal', { p_id: id, p_tx_hash: hash });
+    if (rpcError) throw new Error(rpcError.message);
+    return w;
   }
 
   async rejectWithdrawal(id: string, reason: string) {
-    const w = await closeWithdrawal(id, { status: 'failed', failure_reason: reason });
-    // Refund in ledger
-    await supabase.rpc('fail_withdrawal', {
-      p_user_id: w.user_id,
-      p_amount: w.usdt_amount,
-      p_withdrawal_id: id
-    });
+    const { error } = await supabase.rpc('reject_withdrawal', { p_id: id, p_reason: reason });
+    if (error) throw new Error(error.message);
     return true;
   }
 }

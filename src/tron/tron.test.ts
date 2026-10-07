@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TronWeb } from 'tronweb';
-import { formatUsdt, parseUsdt } from './usdt.js';
+import { formatUsdt, parseUsdt, payoutError, withdrawalAddressError } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
 import { burnSunNeeded, energyToRent, nettsIdempotencyKey, nextPollAt, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, tronNrgTrx } from './energy.js';
 
@@ -85,4 +85,26 @@ test('deposit polling: fast while watched, 6 h for 7 days after, then stops', ()
   assert.equal((nextPollAt(now, new Date(now.getTime() - 6 * 24 * h)) as Date).getTime() - now.getTime(), 6 * h);
   assert.equal(nextPollAt(now, new Date(now.getTime() - 8 * 24 * h)), 'infinity');
   assert.equal(nextPollAt(now, null), 'infinity');
+});
+
+test('withdrawal payout check: exact amount, only from the treasury, mined after the request', () => {
+  const T = 'TExQU3qEet84uFZu2fEvLmx4mZP5o1JuGq', createdAt = new Date('2026-10-08T10:00:00Z');
+  const after = new Date('2026-10-08T10:05:00Z');
+  const w = { treasury: T, expected: 25_000_000n, createdAt };
+  assert.equal(payoutError([{ from: T, amountRaw: 25_000_000n, blockTs: after }], w), null);
+  assert.match(payoutError([], w)!, /not found/);
+  assert.match(payoutError([{ from: 'TOther', amountRaw: 25_000_000n, blockTs: after }], w)!, /treasury/);
+  assert.match(payoutError([{ from: T, amountRaw: 25_000_000n, blockTs: createdAt }], w)!, /older/);   // an old payment reused
+  assert.match(payoutError([{ from: T, amountRaw: 24_999_999n, blockTs: after }], w)!, /pays 24.999999 USDT/);
+  assert.match(payoutError([{ from: T, amountRaw: 25_000_000n, blockTs: after }], { ...w, treasury: '' })!, /treasury/);
+});
+
+test('withdrawal address: base58 only, never the treasury or the USDT contract', () => {
+  const T = 'TExQU3qEet84uFZu2fEvLmx4mZP5o1JuGq', usdtContract = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+  assert.equal(withdrawalAddressError('TSqnzJg2zyQPx3NKfW4XqULaq3h5vuKr65', [T, usdtContract]), null);
+  assert.match(withdrawalAddressError(T, [T, usdtContract])!, /cannot receive/);
+  assert.match(withdrawalAddressError(usdtContract, [T, usdtContract])!, /cannot receive/);
+  assert.match(withdrawalAddressError('41' + '0'.repeat(40), [])!, /Invalid/);                     // hex form
+  assert.match(withdrawalAddressError('TSqnzJg2zyQPx3NKfW4XqULaq3h5vuKr66', [])!, /Invalid/);     // bad checksum
+  assert.match(withdrawalAddressError(undefined, [])!, /Invalid/);
 });

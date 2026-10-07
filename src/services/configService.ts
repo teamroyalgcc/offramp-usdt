@@ -38,28 +38,13 @@ export class ConfigService {
     return ConfigService.instance;
   }
 
+  /** Fails closed: the server refuses to start without the live settings row. */
   async loadConfig(): Promise<void> {
-    try {
-      const { data, error } = await supabase
-        .from('system_settings')
-        .select('*')
-        .eq('id', 1)
-        .maybeSingle();
-
-      if (error) {
-        if (error.code === 'PGRST205' || error.message.includes('relation')) {
-          return;
-        }
-        throw error;
-      }
-
-      if (data) {
-        this.config = { ...this.config, ...data };
-        this.isLoaded = true;
-      }
-    } catch (err) {
-      console.error('[CONFIG_SERVICE] Load Error:', err);
-    }
+    const { data, error } = await supabase.from('system_settings').select('*').eq('id', 1).maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('system_settings row 1 is missing: apply db/schema.sql');
+    this.config = { ...this.config, ...data };
+    this.isLoaded = true;
   }
 
   get<K extends keyof SystemConfig>(key: K): SystemConfig[K] {

@@ -32,3 +32,9 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
   req.user = { id: decoded.id, kycStatus: user.kyc_status };
   next();
 };
+
+/** Client-sent `Idempotency-Key` header (a retry or double tap reuses it), else a fresh one per request. */
+export const idempotencyKey = (req: Request) => {
+  const key = req.get('idempotency-key');
+  return key && /^[\w-]{8,64}$/.test(key) ? key : crypto.randomUUID();
+};

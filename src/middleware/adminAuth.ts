@@ -30,3 +30,7 @@ export const adminAuth = async (req: AdminRequest, res: Response, next: NextFunc
     res.status(401).json({ message: 'Invalid session' });
   }
 };
+
+// Role matrix: staff accounts can look but not move money or change users/settings.
+export const notStaff = (req: AdminRequest, res: Response, next: NextFunction) =>
+  req.admin?.role === 'staff' ? res.status(403).json({ message: 'Staff accounts are read-only' }) : next();

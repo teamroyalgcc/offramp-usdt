@@ -25,7 +25,7 @@ export class WSService {
   }
 
   public init(server: Server) {
-    this.wss = new WebSocketServer({ server, path: '/ws' });
+    this.wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4 * 1024 }); // clients only receive
 
     this.wss.on('connection', (ws: AuthenticatedWebSocket, req) => {
       ws.isAlive = true;
@@ -35,7 +35,8 @@ export class WSService {
       const url = new URL(req.url || '', `http://${req.headers.host}`);
       const token = url.searchParams.get('token');
 
-      if (token) {
+      if (!token) return ws.close(4001, 'Unauthorized');
+      {
         try {
           const decoded = jwt.verify(token, config.jwtSecret) as any;
           ws.userId = decoded.id;
@@ -46,8 +47,8 @@ export class WSService {
           this.clients.get(ws.userId!)?.add(ws);
           console.log(`[WS] Client connected for user: ${ws.userId}`);
         } catch (err) {
-          console.error('[WS] Auth failed:', err);
           ws.close(4001, 'Unauthorized');
+          return;
         }
       }
 

@@ -15,7 +15,8 @@ import bankAccountController from './controllers/bankAccountController.js';
 import configService from './services/configService.js';
 import { authenticate } from './middleware/authMiddleware.js';
 import { requireKyc } from './middleware/requireKyc.js';
-import { adminAuth } from './middleware/adminAuth.js';
+import { adminAuth, notStaff } from './middleware/adminAuth.js';
+import { rateLimit } from './middleware/rateLimit.js';
 import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
 import supabase from './utils/supabase.js';
@@ -23,6 +24,8 @@ import { query } from './utils/db.js';
 import depositWorker from './workers/depositWorker.js';
 
 const app = express();
+app.set('trust proxy', 1); // Render's proxy: req.ip is the client, for rate limits
+app.disable('x-powered-by');
 const server = createServer(app);
 
 // Initialize WebSocket Service
@@ -49,18 +52,26 @@ app.get('/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
+    console.error('[HEALTH]', err.message);
     res.status(503).json({ 
       status: 'degraded', 
       db: 'error', 
-      message: err.message,
       timestamp: new Date().toISOString()
     });
   }
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+// Browsers: only the admin panel and the landing page (rate widget). The mobile app sends no Origin.
+const corsOrigins = ['https://admin.royalgccforex.com', 'https://royalgccforex.com', 'https://www.royalgccforex.com'];
+app.use(cors(config.nodeEnv === 'production' ? { origin: corsOrigins } : undefined));
+app.use(express.json({ limit: '100kb' }));
+const FIFTEEN_MIN = 15 * 60 * 1000;
+app.use('/api/auth/send-email-otp', rateLimit('otp-send', 5, FIFTEEN_MIN));
+app.use('/api/auth/verify-email-otp', rateLimit('otp-verify', 10, FIFTEEN_MIN));
+app.use('/api/auth/google', rateLimit('google', 20, FIFTEEN_MIN));
+app.use('/api/auth/pin/send-code', rateLimit('pin-code', 5, FIFTEEN_MIN));
+app.use('/api/admin/login', rateLimit('admin-login', 10, FIFTEEN_MIN));
 
 // Routes
 const apiRouter = express.Router();
@@ -87,8 +98,7 @@ apiRouter.use('/exchange', exchangeRouter);
 
 // Withdrawal Routes (USDT to Wallet)
 // USDT withdrawals are paid by an admin from the treasury wallet by hand, then marked
-// sent with the tx hash (verified on-chain). withdrawalWorker (auto-send from
-// SYSTEM_PRIVATE_KEY) is intentionally not started.
+// sent with the tx hash (verified on-chain). There is no auto-send from a server key.
 const withdrawalRouter = express.Router();
 withdrawalRouter.post('/', authenticate, requireKyc, withdrawalController.requestWithdrawal.bind(withdrawalController));
 withdrawalRouter.get('/my', authenticate, withdrawalController.getMyWithdrawals.bind(withdrawalController));
@@ -128,25 +138,25 @@ adminRouter.post('/:id/update', adminAuth, adminController.updateOtherAdmin.bind
 adminRouter.delete('/:id', adminAuth, adminController.deleteOtherAdmin.bind(adminController));
 adminRouter.get('/dashboard', adminAuth, adminController.getDashboard.bind(adminController));
 adminRouter.get('/kyc', adminAuth, adminController.getKycList.bind(adminController));
-adminRouter.post('/kyc/:id/approve', adminAuth, adminController.approveKyc.bind(adminController));
-adminRouter.post('/kyc/:id/reject', adminAuth, adminController.rejectKyc.bind(adminController));
+adminRouter.post('/kyc/:id/approve', adminAuth, notStaff, adminController.approveKyc.bind(adminController));
+adminRouter.post('/kyc/:id/reject', adminAuth, notStaff, adminController.rejectKyc.bind(adminController));
 adminRouter.get('/deposits', adminAuth, adminController.getDeposits.bind(adminController));
 adminRouter.get('/deposits/health', adminAuth, adminController.getDepositHealth.bind(adminController));
-adminRouter.post('/deposits/audit', adminAuth, adminController.runDepositAudit.bind(adminController));
-adminRouter.post('/deposits/:id/credit', adminAuth, adminController.creditHeldDeposit.bind(adminController));
-adminRouter.post('/sweeps/:id/retry', adminAuth, adminController.retrySweep.bind(adminController));
-adminRouter.post('/deposit-addresses/:id/scan', adminAuth, adminController.scanDepositAddress.bind(adminController));
+adminRouter.post('/deposits/audit', adminAuth, notStaff, adminController.runDepositAudit.bind(adminController));
+adminRouter.post('/deposits/:id/credit', adminAuth, notStaff, adminController.creditHeldDeposit.bind(adminController));
+adminRouter.post('/sweeps/:id/retry', adminAuth, notStaff, adminController.retrySweep.bind(adminController));
+adminRouter.post('/deposit-addresses/:id/scan', adminAuth, notStaff, adminController.scanDepositAddress.bind(adminController));
 adminRouter.get('/orders', adminAuth, adminController.getOrders.bind(adminController));
-adminRouter.post('/orders/:id/status', adminAuth, adminController.updateOrderStatus.bind(adminController));
+adminRouter.post('/orders/:id/status', adminAuth, notStaff, adminController.updateOrderStatus.bind(adminController));
 adminRouter.get('/users', adminAuth, adminController.getUsers.bind(adminController));
-adminRouter.post('/users/:id/freeze', adminAuth, adminController.freezeUser.bind(adminController));
+adminRouter.post('/users/:id/freeze', adminAuth, notStaff, adminController.freezeUser.bind(adminController));
 
 // Admin Withdrawal APIs (USDT to Wallet)
 adminRouter.get('/withdrawals', adminAuth, withdrawalController.adminListAll.bind(withdrawalController));
-adminRouter.post('/withdrawals/:id/approve', adminAuth, withdrawalController.adminProcess.bind(withdrawalController));
-adminRouter.post('/withdrawals/:id/reject', adminAuth, withdrawalController.adminReject.bind(withdrawalController));
+adminRouter.post('/withdrawals/:id/approve', adminAuth, notStaff, withdrawalController.adminProcess.bind(withdrawalController));
+adminRouter.post('/withdrawals/:id/reject', adminAuth, notStaff, withdrawalController.adminReject.bind(withdrawalController));
 
-adminRouter.post('/settings/rate', adminAuth, adminController.updateUSDTSpread.bind(adminController));
+adminRouter.post('/settings/rate', adminAuth, notStaff, adminController.updateUSDTSpread.bind(adminController));
 adminRouter.get('/audit', adminAuth, adminController.getAuditLogs.bind(adminController));
 
 apiRouter.use('/admin', adminRouter);
@@ -237,5 +247,13 @@ const startServer = async () => {
 };
 
 startServer();
+
+// Render sends SIGTERM on deploys and gives ~30 s: finish the worker tick in progress, then exit.
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM: draining the deposit worker');
+  setTimeout(() => process.exit(0), 25_000).unref();
+  await depositWorker.stop();
+  process.exit(0);
+});
 
 export default app;

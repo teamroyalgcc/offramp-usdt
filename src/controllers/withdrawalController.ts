@@ -2,8 +2,12 @@ import { Response } from 'express';
 import { BaseController } from './baseController.js';
 import withdrawalService from '../services/withdrawalService.js';
 import { AuthRequest } from '../middleware/authMiddleware.js';
-import { TronWeb } from 'tronweb';
 import { AuthService } from '../services/auth.service.js';
+import { idempotencyKey } from '../middleware/authMiddleware.js';
+import adminService from '../services/adminService.js';
+import { withdrawalAddressError } from '../tron/usdt.js';
+import config from '../config/index.js';
+import supabase from '../utils/supabase.js';
 
 export class WithdrawalController extends BaseController {
   async requestWithdrawal(req: AuthRequest, res: Response) {
@@ -16,22 +20,23 @@ export class WithdrawalController extends BaseController {
         return this.clientError(res, 'Missing destination_address or usdt_amount');
       }
 
-      // Validate Tron address
-      if (!TronWeb.isAddress(destination_address)) {
-        return this.clientError(res, 'Invalid Tron address');
-      }
+      const { data: own } = await supabase.from('deposit_addresses').select('id').eq('tron_address', destination_address).maybeSingle();
+      const addressError = withdrawalAddressError(destination_address, [config.treasuryAddress, config.tron.usdtContract])
+        ?? (own ? 'You cannot withdraw to a Royal GCC deposit address' : null);
+      if (addressError) return this.clientError(res, addressError);
 
       const pinError = await AuthService.verifyTransactionPin(req.user.id, req.body.pin);
       if (pinError) return this.forbidden(res, pinError);
 
       const withdrawal = await withdrawalService.requestUSDTWithdrawal(req.user.id, {
         destination_address,
-        usdt_amount: Number(usdt_amount)
+        usdt_amount: String(usdt_amount),
+        idempotency_key: idempotencyKey(req),
       });
 
       return this.ok(res, withdrawal);
     } catch (error: any) {
-      return this.fail(res, error.message);
+      return this.clientError(res, error.message);
     }
   }
 
@@ -63,7 +68,8 @@ export class WithdrawalController extends BaseController {
       
       if (!tx_hash) return this.clientError(res, 'Transaction hash required');
 
-      await withdrawalService.processWithdrawal(id, tx_hash);
+      const w = await withdrawalService.processWithdrawal(id, tx_hash);
+      await adminService.logAction(req.admin.id, 'WITHDRAWAL_SENT', 'usdt_withdrawal', id, { tx_hash, user_id: w.user_id, net_amount: w.net_amount });
       return this.ok(res, { success: true, message: 'Withdrawal processed' });
     } catch (error: any) {
       return this.clientError(res, error.message);
@@ -78,6 +84,7 @@ export class WithdrawalController extends BaseController {
       if (!reason) return this.clientError(res, 'Rejection reason required');
 
       await withdrawalService.rejectWithdrawal(id, reason);
+      await adminService.logAction(req.admin.id, 'WITHDRAWAL_REJECTED', 'usdt_withdrawal', id, { reason });
       return this.ok(res, { success: true, message: 'Withdrawal rejected and funds refunded' });
     } catch (error: any) {
       return this.clientError(res, error.message);

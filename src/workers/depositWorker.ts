@@ -112,25 +112,34 @@ export class DepositWorker {
     void this.loop();
   }
 
-  stop() {
+  /** Stops after the tick in progress, so a deploy (SIGTERM) doesn't abandon a paid rental mid-step. */
+  async stop() {
     this.running = false;
+    await this.current;
   }
 
   private operatingAddress() {
     return config.sweep.operatingKey ? TronWeb.address.fromPrivateKey(config.sweep.operatingKey.replace(/^0x/, '')) || null : null;
   }
 
+  private current: Promise<void> = Promise.resolve();
+
   private async loop() {
     while (this.running) {
-      try {
-        await this.pollDueAddresses();
-        await this.processSweeps();
-        await this.dailyAudit();
-        this.lastTickAt = Date.now();
-      } catch (e: any) {
-        alert('tick failed', { error: e.message });
-      }
-      await new Promise((r) => setTimeout(r, TICK_MS));
+      this.current = this.tick();
+      await this.current;
+      if (this.running) await new Promise((r) => setTimeout(r, TICK_MS));
+    }
+  }
+
+  private async tick() {
+    try {
+      await this.pollDueAddresses();
+      await this.processSweeps();
+      await this.dailyAudit();
+      this.lastTickAt = Date.now();
+    } catch (e: any) {
+      alert('tick failed', { error: e.message });
     }
   }
 

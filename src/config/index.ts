@@ -12,7 +12,6 @@ const configSchema = z.object({
   TRON_NETWORK: z.enum(['mainnet', 'testnet']).default('mainnet'),
   TRON_PRO_API_KEY: z.string().optional(),
   TREASURY_ADDRESS: z.string().optional(),
-  ENABLE_REAL_PAYOUTS: z.string().optional().default('false').transform(v => v === 'true'),
   KYC_MODE: z.enum(['MANUAL', 'AUTO']).default('MANUAL'),
   TRON_FULL_NODE: z.string().url().default('https://api.trongrid.io'),
   TRON_SOLIDITY_NODE: z.string().url().default('https://api.trongrid.io'),
@@ -38,6 +37,22 @@ if (!env.success) {
 
 const validatedConfig = env.data;
 
+// Production must run on mainnet with every money/auth secret set; otherwise refuse to start.
+if (validatedConfig.NODE_ENV === 'production') {
+  const required = ['TREASURY_ADDRESS', 'HD_MNEMONIC', 'OPERATING_WALLET_PRIVATE_KEY', 'NETTS_API_KEY', 'TRON_PRO_API_KEY',
+    'DATABASE_URL', 'BREVO_API_KEY', 'EMAIL_FROM', 'ALERT_EMAIL', 'GOOGLE_CLIENT_ID'];
+  const problems = required.filter((k) => !process.env[k]?.trim()).map((k) => `${k} is not set`);
+  if (validatedConfig.JWT_SECRET.length < 32) problems.push('JWT_SECRET must be at least 32 characters');
+  if (validatedConfig.TRON_NETWORK !== 'mainnet') problems.push('TRON_NETWORK must be mainnet');
+  if (validatedConfig.USDT_CONTRACT_ADDRESS && validatedConfig.USDT_CONTRACT_ADDRESS !== 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t') {
+    problems.push('USDT_CONTRACT_ADDRESS must be the mainnet USDT contract (or unset)');
+  }
+  if (problems.length) {
+    console.error('❌ Production config:', problems.join('; '));
+    process.exit(1);
+  }
+}
+
 export const config = {
   port: validatedConfig.PORT,
   jwtSecret: validatedConfig.JWT_SECRET,
@@ -47,7 +62,6 @@ export const config = {
   },
   nodeEnv: validatedConfig.NODE_ENV,
   treasuryAddress: validatedConfig.TREASURY_ADDRESS || '',
-  enableRealPayouts: validatedConfig.ENABLE_REAL_PAYOUTS,
   kycMode: validatedConfig.KYC_MODE,
   tron: {
     network: validatedConfig.TRON_NETWORK || (validatedConfig.NODE_ENV === 'testnet' ? 'testnet' : 'mainnet'),

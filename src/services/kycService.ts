@@ -42,6 +42,13 @@ export class KycService {
     let documentUrl = null;
 
     if (file) {
+      // Trust the bytes, not the client's MIME type.
+      const b: Buffer = file.buffer;
+      const contentType = b?.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])) ? 'image/jpeg'
+        : b?.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])) ? 'image/png'
+        : b?.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP' ? 'image/webp'
+        : null;
+      if (!contentType) throw new Error('The Aadhaar photo must be a JPEG, PNG or WebP image.');
       try {
         const fileName = `${userId}_${Date.now()}_aadhaar.jpg`;
         console.log(`[KYC_SERVICE] Attempting upload to KYC-DOCUMENTS bucket: ${fileName}`);
@@ -49,7 +56,7 @@ export class KycService {
         const { error: uploadError } = await supabase.storage
           .from('KYC-DOCUMENTS')
           .upload(fileName, file.buffer, {
-            contentType: file.mimetype,
+            contentType,
             cacheControl: '3600',
             upsert: true
           });

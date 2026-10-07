@@ -89,9 +89,54 @@ test('schema.sql money functions', async () => {
   await db.query(`select fail_withdrawal($1, 10, $2)`, [u, crypto.randomUUID()]);
   assert.deepEqual(await acct(), { a: '15.000000', l: '0.000000' });
 
+  // sell orders: same idempotency key returns the first order; minimum, pause flag, daily limits (IST day)
+  await one(`select record_deposit('tron_mainnet',$1,'tx9',0,'TFROM','85000000',101,now(),10000000) r`, [a]);
+  assert.deepEqual(await acct(), { a: '100.000000', l: '0.000000' });
+  const keyed = (amt: number, key: string) => one(`select create_exchange_order($1,$2,$3,90,$4,$5) r`, [u, amt, amt * 90, myBank, key]).then((x) => x.r);
+  const k1 = await keyed(10, 'k1');
+  assert.deepEqual(await keyed(10, 'k1'), { success: true, order_id: k1.order_id, duplicate: true });
+  assert.deepEqual(await acct(), { a: '90.000000', l: '10.000000' });
+  await db.query(`select complete_exchange_order($1, false, 'r')`, [k1.order_id]);
+  assert.match((await order(9)).message, /Minimum sell is 10/);
+  await db.query(`update system_settings set daily_exchange_usdt = 100`); // today: 50 paid; refunded orders don't count
+  assert.match((await order(50.000001)).message, /Daily sell limit is 100/);
+  await db.query(`update system_settings set daily_exchange_usdt = 10000, daily_withdrawal_inr = 8000`);  // INR today: 4500
+  assert.match((await order(40)).message, /Daily payout limit is 8000 INR/);
+  await db.query(`update exchange_orders set created_at = date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata' - interval '1 second'`);
+  const yesterday = await order(10);                                                   // yesterday (IST) doesn't count
+  assert.equal(yesterday.success, true);
+  await db.query(`select complete_exchange_order($1, false, 'r')`, [yesterday.order_id]);
+  await db.query(`update system_settings set exchanges_enabled = false`);
+  assert.equal((await order(10)).message, 'Sells are paused');
+  await db.query(`update system_settings set exchanges_enabled = true, daily_withdrawal_inr = 500000`);
+
+  // USDT withdrawals: one transaction (limits + lock + insert); complete/reject exactly once
+  const wd = (amt: string, key: string) => one(`select request_withdrawal($1,$2,'TDEST',$3) r`, [u, amt, key]).then((x) => x.r);
+  assert.match((await wd('19.999999', 'w0')).message, /Minimum withdrawal amount is 20/);
+  assert.equal((await wd('200', 'w0')).message, 'Insufficient balance');
+  assert.equal((await one(`select count(*)::int c from usdt_withdrawals`)).c, 0);      // nothing written on failure
+  const w1 = await wd('30', 'w1');
+  assert.deepEqual([w1.success, w1.withdrawal.fee, w1.withdrawal.net_amount], [true, 5, 25]);
+  assert.equal((await wd('30', 'w1')).duplicate, true);                                // retry: same withdrawal, locked once
+  assert.deepEqual(await acct(), { a: '70.000000', l: '30.000000' });
+  await db.query(`update system_settings set daily_withdrawal_usdt = 50`);
+  assert.match((await wd('21', 'w2')).message, /Daily USDT withdrawal limit is 50/);
+  await db.query(`update system_settings set daily_withdrawal_usdt = 50000, withdrawals_enabled = false`);
+  assert.match((await wd('20', 'w2')).message, /paused/);
+  await db.query(`update system_settings set withdrawals_enabled = true`);
+  await db.query(`select complete_withdrawal($1, 'hash1')`, [w1.withdrawal.id]);
+  await assert.rejects(db.query(`select complete_withdrawal($1, 'hash2')`, [w1.withdrawal.id]), /already completed/);
+  await assert.rejects(db.query(`select reject_withdrawal($1, 'x')`, [w1.withdrawal.id]), /already completed/);
+  assert.deepEqual(await acct(), { a: '70.000000', l: '0.000000' });
+  const w2 = await wd('20', 'w2');
+  await db.query(`select reject_withdrawal($1, 'bad address')`, [w2.withdrawal.id]);
+  await assert.rejects(db.query(`select reject_withdrawal($1, 'again')`, [w2.withdrawal.id]), /already completed/);
+  assert.deepEqual(await acct(), { a: '70.000000', l: '0.000000' });
+  assert.deepEqual(await one(`select status, failure_reason from usdt_withdrawals where id=$1`, [w2.withdrawal.id]), { status: 'failed', failure_reason: 'bad address' });
+
   // the ledger explains the available balance exactly
   const avail = await one(`select sum(case when direction='credit' then amount else -amount end)::text s from ledger_entries where user_id=$1 and balance_type='available'`, [u]);
-  assert.equal(avail.s, '15.000000');
+  assert.equal(avail.s, '70.000000');
 
   await db.close();
 });

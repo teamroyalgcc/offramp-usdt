@@ -7,8 +7,17 @@ Follow these steps in order. Everything runs on free tiers. The only money you n
 | Database and file storage | none | Supabase | Free |
 | Backend API and worker | `teamroyalgcc/offramp-usdt` | Render web service | Free |
 | Keep-awake pinger | none | cron-job.org | Free |
-| Admin panel | `teamroyalgcc/offramp_royalGCC_admin_pannel` | Cloudflare Pages | Free |
-| Landing page | `teamroyalgcc/royal_gcc_landing_page` | Cloudflare Pages | Free |
+| Admin panel | `teamroyalgcc/offramp_royalGCC_admin_pannel` | Cloudflare Worker (static assets) | Free |
+| Landing page | `teamroyalgcc/royal_gcc_landing_page` | Cloudflare Worker (static assets) | Free |
+| Domain and DNS | none | GoDaddy (registrar), Cloudflare (DNS) | Domain renewal only |
+
+Live addresses:
+
+- API: `https://api.royalgccforex.com`, a CNAME to `offramp.onrender.com` (DNS only, grey cloud)
+- Admin panel: `https://admin.royalgccforex.com`
+- Landing page: `https://royalgccforex.com` and `https://www.royalgccforex.com`
+
+Running it day to day: [OPERATING_MANUAL.md](OPERATING_MANUAL.md).
 | Android app (APK) | `teamroyalgcc/royal_gcc_forex_mobile_app` | EAS Build | Free plan (monthly build quota) |
 | Email (OTP and alerts) | none | Brevo | Free, 300 emails/day |
 
@@ -82,16 +91,20 @@ One Supabase project serves everything. Only the backend talks to it; the app an
 1. **TronGrid.** Go to <https://www.trongrid.io> → sign up → Dashboard → **Create API Key**. The key is `TRON_PRO_API_KEY`. The free tier is plenty.
 2. **Netts (energy rental).** Go to <https://www.netts.io/workspace/> → register. An API key is issued automatically: this is `NETTS_API_KEY`.
    - Wallet → deposit about 50 TRX (prepaid balance; one sweep costs about 2 to 4 TRX).
-   - API → IP whitelist: add Render's outbound IPs (Render → your service → **Connect** → **Outbound**). Do this after Step 4 creates the service.
+   - API → IP whitelist. Netts accepts **single IPs only** (no ranges), at most 5 per key, and checks every request. Render's outbound traffic leaves from shared ranges (`74.220.52.0/24` and `74.220.60.0/24` in Singapore), and an entry like `74.220.52.0` does **not** cover the range. So: after Step 4, read the IP the server actually uses from its startup log (`netts ok` or `netts FAILED: whitelist this egress IP in Netts`, field `egress`) and whitelist that exact IP. Today it is `74.220.52.132`.
+   - The backend sends that same IP in the `X-Real-IP` header on every Netts call (Netts requires it). Nothing to configure.
+   - If Render later leaves from a different IP, Netts calls fail and sweeps fall back to TronNRG or burn (more expensive). The next startup log and the daily alert email name the new IP: add it in Netts.
    - Never paste the key anywhere except Render.
 3. **Brevo (email).**
    - Go to <https://www.brevo.com> → sign up.
-   - Senders → add and verify the sender address, for example `support@yourdomain.com` or a Gmail address. This is `EMAIL_FROM`.
+   - Senders & domains → authenticate the domain `royalgccforex.com`. Brevo gives DNS records (`brevo1._domainkey`, `brevo2._domainkey`, a `brevo-code` TXT, DMARC). Add them in Cloudflare DNS as **DNS only** (grey cloud). Email records must never be proxied.
+   - The sender is `no-reply@royalgccforex.com`. This is `EMAIL_FROM`.
    - SMTP & API → **API Keys** → Generate. This is `BREVO_API_KEY`.
 4. **Google sign-in (optional; email OTP works without it).** While `GOOGLE_CLIENT_ID` is unset, the backend refuses Google sign-in (fail closed).
    - Go to <https://console.cloud.google.com> → APIs & Services → Credentials → Create **OAuth client ID** → type **Web application**. This is `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (app).
    - Create a second OAuth client of type **Android**, with package `com.royalgccforex.app` and the SHA-1 from Step 9.3. This is `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`.
-   - Backend `GOOGLE_CLIENT_ID` = both IDs, comma-separated: `<web id>,<android id>`. Only tokens issued to these IDs, with a verified email, are accepted.
+   - Backend `GOOGLE_CLIENT_ID` = both IDs, comma-separated with no spaces: `<web id>,<android id>`. Only tokens issued to one of these IDs, with a verified email, are accepted. **If it is unset, Google sign-in fails for everyone.**
+   - The OAuth consent screen must be **published** (not in Testing), or only listed test users can sign in.
 5. **Generate the login secret:**
 
    ```bash
@@ -106,6 +119,7 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    - Build command: `npm ci --include=dev && npm run build`
    - Start command: `npm start`
    - Instance type: **Free**
+   - Region: **Singapore**
    - Advanced → Health check path: `/health`
 3. **Environment variables.** Add all of these:
 
@@ -126,8 +140,9 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    | `DEPOSIT_MIN_USDT` | `10` (smaller deposits are held for admin review) |
    | `SWEEP_IMMEDIATE_USDT` | `100` (at or above: moved to treasury at once; below: within 24 h) |
    | `SWEEP_MAX_COST_TRX` | `10` (safety limit per transfer to treasury) |
+   | `OPERATING_WALLET_MIN_TRX` | `50` (optional; the daily email warns below this) |
    | `BREVO_API_KEY` | from Step 3 |
-   | `EMAIL_FROM` | verified Brevo sender |
+   | `EMAIL_FROM` | `no-reply@royalgccforex.com` |
    | `ALERT_EMAIL` | the client's email for daily problem alerts |
    | `GOOGLE_CLIENT_ID` | from Step 3: `<web id>,<android id>` (optional; unset = Google sign-in off) |
 
@@ -136,9 +151,11 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    - `🚀 Server running`
    - a JSON line with `"msg":"started"`, showing the treasury, `"netts":true` and the operating wallet address.
 
-   If the server stops with `TREASURY_ADDRESS ... differs from the pinned treasury`, the env var has a typo; fix it. Opening `https://<your-service>.onrender.com/health` should return `status: ok`.
-6. Now whitelist the service's outbound IPs in Netts (Step 3.2).
-5. Your API base is `https://<your-service>.onrender.com`. The app uses it with `/api` appended; the admin panel uses it without.
+   - a line `netts ok`, or `netts FAILED: whitelist this egress IP in Netts` with an `egress` IP. On FAILED, add that IP in Netts (Step 3.2) and restart (Manual Deploy → Restart service).
+
+   If the server stops with `TREASURY_ADDRESS ... differs from the pinned treasury`, the env var has a typo; fix it. Opening `https://offramp.onrender.com/health` should return `status: ok`.
+5. **Custom domain.** Render → service → Settings → Custom Domains → add `api.royalgccforex.com`. In Cloudflare DNS, add `CNAME api → offramp.onrender.com`, **DNS only** (grey cloud; Render issues the certificate). Wait for Render to show Verified and Certificate Issued.
+6. The API base is `https://api.royalgccforex.com`. The app uses it with `/api` appended; the admin panel uses it without. Both point at the custom domain, so the backend can move to another host without an app update.
 
 > **Run exactly one instance.** The worker is inside the API process. Never scale this service above one instance.
 
@@ -147,33 +164,40 @@ One Supabase project serves everything. Only the backend talks to it; the app an
 Free Render services sleep after 15 minutes idle, and free Supabase projects pause after a week idle. One pinger fixes both.
 
 1. Go to <https://cron-job.org> → sign up → Create cronjob.
-2. URL: `https://<your-service>.onrender.com/health`. Schedule: every 10 minutes. Save.
+2. URL: `https://api.royalgccforex.com/health`. Schedule: every 10 minutes. Save.
+3. Turn on failure notifications, so you get an email when the backend is down.
 
 One always-on service uses about 744 of Render's 750 free hours per month, so run **only this one** free service in the workspace.
 
-## Step 6. Admin panel on Cloudflare Pages (10 min)
+## Step 6. Admin panel on a Cloudflare Worker (10 min)
 
-1. Go to <https://dash.cloudflare.com> → Workers & Pages → Create → **Pages** → connect GitHub → `teamroyalgcc/offramp_royalGCC_admin_pannel`, branch `main`.
-2. Build settings:
-   - Framework preset: **Next.js (Static HTML Export)**
+Both front ends are served as a **Worker with static assets** (Workers Builds), not as a Pages project. Each repo has a `wrangler.jsonc` that tells Cloudflare which folder to serve.
+
+0. Move the domain's DNS to Cloudflare first (once): add the site `royalgccforex.com` in Cloudflare (Free plan), then set the two Cloudflare nameservers in GoDaddy → Domain → Nameservers. Keep Brevo's email records **DNS only**.
+1. Go to <https://dash.cloudflare.com> → Workers & Pages → Create → **Worker** → **Import a repository** → `teamroyalgcc/offramp_royalGCC_admin_pannel`, branch `main`.
+2. Settings:
+   - Project name: `royalgcc-admin` (must match `name` in `wrangler.jsonc`)
    - Build command: `npm run build`
-   - Output directory: `out`
-3. Environment variables:
-   - `NEXT_PUBLIC_API_URL` = `https://<your-service>.onrender.com` (no `/api`)
-   - `NODE_VERSION` = `22`
-4. Deploy, then open the `*.pages.dev` URL. Optionally add a custom domain such as `admin.yourdomain.com`.
+   - Deploy command: `npx wrangler deploy`
+   - `wrangler.jsonc` serves `./out` (the Next.js static export).
+3. Build variables (optional): `NEXT_PUBLIC_API_URL` = `https://api.royalgccforex.com` (no `/api`). This is already the default in `src/lib/axios.ts`. Also `NODE_VERSION` = `22`.
+4. Deploy. Then Worker → Settings → **Domains & Routes** → add custom domain `admin.royalgccforex.com`, and turn **off** the `workers.dev` route.
 5. Log in with the admin you created in Step 2.3. Create one account per staff member under **Role Management**.
 
-## Step 7. Landing page on Cloudflare Pages (5 min)
+## Step 7. Landing page on a Cloudflare Worker (5 min)
 
-1. Create a new Pages project from `teamroyalgcc/royal_gcc_landing_page`, branch `main`.
+1. Same as Step 6, with `teamroyalgcc/royal_gcc_landing_page`, branch `main`.
+   - Project name: `royal-gcc-landing-page` (matches `wrangler.jsonc`)
    - Build command: `npm run build`
-   - Output directory: `dist`
-2. Environment variable `VITE_APK_URL` = the APK download link from Step 9. Update it and redeploy for every new app build.
+   - Deploy command: `npx wrangler deploy`
+   - `wrangler.jsonc` serves `./dist`, with single-page-app fallback (so `/privacy` works).
+   - Build variable `NODE_VERSION` = `22`.
+2. Custom domains: `royalgccforex.com` and `www.royalgccforex.com`. Turn off `workers.dev`.
+3. Build variable `VITE_APK_URL` = a **permanent** APK link (see [OPERATING_MANUAL.md](OPERATING_MANUAL.md) section 7). Vite reads it at build time, so redeploy after changing it. Until it is set, the site falls back to an old Google Drive link in `src/app/config.ts`.
 
 ## Step 8. Live mainnet test (30 min, about 20 USDT)
 
-There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Use a test user account.
+There is no testnet step on purpose: Netts and TronNRG run on mainnet only. See [SWEEP_DESIGN.md](SWEEP_DESIGN.md). Use a test user account.
 
 1. In the app: sign in, complete KYC and add a bank account. In the admin panel: approve the KYC.
    - Profile → **Transaction PIN** → set a 6-digit PIN. Try selling before setting it: the app must send you to the PIN screen first.
@@ -181,14 +205,14 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
    - Within about 1 to 3 minutes the app shows "Deposit received", and the balance becomes exactly **20**.
    - In the admin Dashboard, the deposit appears as **Credited**. It stays **In progress** for up to 24 h, because balances under `SWEEP_IMMEDIATE_USDT` (100) are moved to treasury once a day.
    - To test the transfer now, set `SWEEP_IMMEDIATE_USDT` to `10` in Render for this test (the service restarts), then set it back to `100`.
-3. **Check the transfer to treasury.** The deposit shows **Moved to treasury**. On <https://tronscan.org>, the treasury received the full 20 USDT. In Supabase, the `sweeps` row shows `provider` (`netts`, or `burn` if Netts was unavailable) and `cost_trx` (about 2 to 4 TRX with Netts, including the one-time activation of the new address).
+3. **Check the transfer to treasury.** The deposit shows **Moved to treasury**. On <https://tronscan.org>, the treasury received the full 20 USDT. In Supabase, the `sweeps` row shows `provider` (`netts`; `tronnrg` or `burn` if Netts was unavailable; `activate` means the address was activated and the sweep continued) and `cost_trx` (about 2 to 4 TRX with Netts, plus about 1.1 TRX for the one-time activation when TronNRG or burn is used).
 4. **Sell order.** The minimum sell is 10 USDT (`system_settings.min_exchange_usdt`). With the balance from step 2 (20 USDT):
    - Sell 10 USDT. Admin → Sell Orders → open the order → choose **Refund**. The balance returns to what it was.
    - Sell 10 USDT again. Send the INR to the bank shown → choose **Paid**, enter the UTR and confirm. The order shows as completed in the app, and the balance drops by 10.
    - **PIN checks.** Enter a wrong PIN: the order is refused ("Wrong PIN. 4 attempts left."). Five wrong PINs lock sells and withdrawals for 15 minutes. **Forgot PIN?** on the PIN screen sends an email code and lets you set a new PIN without the old one.
 5. **Withdrawal (optional).** Request a 20 USDT withdrawal.
    - Admin → USDT Withdrawals → send the "Send this" amount from the treasury in TronLink → **Mark as sent** → paste the tx hash. A wrong hash or amount is refused with a clear message.
-6. **Statement.** History → **Statement** lists every change: Deposit, Processing fee, Sell order (locked), Sell order refunded, Withdrawal (locked), Withdrawal refunded. The top row's balance equals the app balance.
+6. **Statement.** History → **Statement** lists every change: Deposit, Sell order (locked), Sell order refunded, Withdrawal (locked), Withdrawal refunded. The top row's balance equals the app balance.
 7. Admin Dashboard → **Run check now**. It should say "Nothing to do".
 
 ## Step 9. Android app (APK) with EAS (30 to 60 min)
@@ -212,7 +236,7 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
    eas build -p android --profile preview
    ```
 
-   It produces a downloadable `.apk` link. Put that link in `VITE_APK_URL` (Step 7).
+   It produces a downloadable `.apk` link. That link expires, so copy the file to a permanent place and put that link in `VITE_APK_URL` (Step 7). Details, versioning and the Play Store: [OPERATING_MANUAL.md](OPERATING_MANUAL.md) section 7.
 5. **Play Store later.** Run `eas build -p android --profile production` (produces an AAB), then `eas submit`. This needs a Google Play developer account (one-time USD 25).
 
 ## Step 10. Handover checklist
@@ -221,7 +245,8 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
 - [ ] The client owns or is an admin on: the GitHub org, Supabase (project transferred), Render, Cloudflare, Expo, Brevo, Netts, TronGrid and cron-job.org. Two-factor authentication is on everywhere.
 - [ ] The seed admin password is changed, and each staff member has their own admin login.
 - [ ] `ALERT_EMAIL` points to the client.
-- [ ] The client has read [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
+- [ ] The client has read [OPERATING_MANUAL.md](OPERATING_MANUAL.md).
+- [ ] The test wallets are replaced and every secret is rotated ([OPERATING_MANUAL.md](OPERATING_MANUAL.md) section 3).
 - [ ] Your own access is removed after the handover period, and the GitHub token is revoked.
 
 ## Troubleshooting
@@ -232,6 +257,8 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
 | Render log: `TREASURY_ADDRESS is required` or `HD_MNEMONIC is not set` | Add the missing environment variable. |
 | OTP email never arrives | Check `BREVO_API_KEY`, that `EMAIL_FROM` is a verified sender, and Brevo → Logs. |
 | App says network error | `EXPO_PUBLIC_API_URL` must end in `/api`, and the Render service must be awake. |
-| Admin panel login fails with a network error | `NEXT_PUBLIC_API_URL` must have **no** `/api`. Redeploy Pages after changing it. |
+| Admin panel login fails with a network error | `NEXT_PUBLIC_API_URL` must have **no** `/api`. Redeploy the Worker after changing it. |
+| Render log: `netts FAILED: whitelist this egress IP in Netts` | Add the `egress` IP from that line in Netts → API → IP Whitelist (single IPs, max 5). |
+| Google sign-in fails | `GOOGLE_CLIENT_ID` must be set to `<web id>,<android id>`, and the OAuth consent screen must be published. |
 | `/health` says degraded | Supabase is paused or the key is wrong. In Supabase, click Restore on the project and check `SUPABASE_SERVICE_ROLE_KEY`. |
 | Deposit not showing | In the app, tap "Check again" on the Deposit screen. In the admin panel, click Run check now, then "Check again" on the item. |

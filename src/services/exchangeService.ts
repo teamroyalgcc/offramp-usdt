@@ -1,7 +1,6 @@
 import supabase from '../utils/supabase.js';
-import { v4 as uuidv4 } from 'uuid';
 import configService from './configService.js';
-import complianceService from './complianceService.js';
+import { formatUsdt, parseUsdt } from '../tron/usdt.js';
 
 import { CACHE_MS, fetchMarketRate, MarketRate, resolveRate, userRate } from './marketRate.js';
 
@@ -50,6 +49,10 @@ export class ExchangeService {
       updatedAt: market ? new Date(market.updatedAt).toISOString() : null,
       manualRate: r.mode === 'manual' ? manualRate : null,
       manualRateExpiresAt: r.mode === 'manual' ? new Date(expires as string).toISOString() : null,
+      // Limits the app shows (the DB enforces them): no hardcoded fee/minimums in the app.
+      minSellUsdt: Number(configService.get('min_exchange_usdt')),
+      minWithdrawalUsdt: Number(configService.get('min_usdt_withdrawal')),
+      withdrawalFeeUsdt: Number(configService.get('usdt_withdrawal_fee')),
     };
   }
 
@@ -58,33 +61,20 @@ export class ExchangeService {
     return (await this.getRateInfo()).rate;
   }
 
-  async createExchangeOrder(userId: string, usdtAmount: number, bankAccountId: string) {
+  /** Pause flag, minimum, daily limits (IST day) and idempotency are enforced inside create_exchange_order. */
+  async createExchangeOrder(userId: string, usdtAmount: string, bankAccountId: string, idempotencyKey: string) {
     try {
-      if (!configService.get('exchanges_enabled')) {
-        throw new Error('Exchanges are paused');
-      }
-
-      const minUsdt = Number(configService.get('min_exchange_usdt') || 0);
-      if (usdtAmount < minUsdt) {
-        throw new Error(`Minimum exchange amount is ${minUsdt} USDT`);
-      }
-
+      const amount = formatUsdt(parseUsdt(usdtAmount)); // exact 6-decimal string; rejects more decimals
       const rate = await this.getLiveRate();
-      const inrAmount = Number((usdtAmount * rate).toFixed(2));
-      
-      // Check limits
-      await complianceService.checkExchangeLimit(userId, usdtAmount);
-      await complianceService.checkWithdrawalLimit(userId, inrAmount);
+      const inrAmount = Number((Number(amount) * rate).toFixed(2));
 
-      const idempotencyKey = uuidv4(); 
-      // Use RPC for atomic operation
       const { data, error } = await supabase.rpc('create_exchange_order', {
         p_user_id: userId,
-        p_usdt_amount: usdtAmount,
+        p_usdt_amount: amount,
         p_inr_amount: inrAmount,
         p_rate: rate,
         p_bank_account_id: bankAccountId,
-        p_idempotency_key: idempotencyKey
+        p_idempotency_key: `${userId}:${idempotencyKey}`
       });
 
       if (error) throw error;
