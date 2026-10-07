@@ -283,6 +283,10 @@ BEGIN
   IF p_usdt_amount IS NULL OR p_usdt_amount <= 0 THEN
     RETURN json_build_object('success', false, 'message', 'Amount must be greater than zero');
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.bank_accounts
+                 WHERE id = p_bank_account_id AND user_id = p_user_id AND deleted_at IS NULL) THEN
+    RETURN json_build_object('success', false, 'message', 'Bank account not found');
+  END IF;
   SELECT available_balance, locked_balance INTO v_avail, v_locked
     FROM public.ledger_accounts WHERE user_id = p_user_id FOR UPDATE;
   IF v_avail IS NULL OR v_avail < p_usdt_amount THEN

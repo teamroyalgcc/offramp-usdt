@@ -58,7 +58,7 @@ export class ExchangeService {
     return (await this.getRateInfo()).rate;
   }
 
-  async createExchangeOrder(userId: string, usdtAmount: number, bankAccountId?: string, bankDetails?: any) {
+  async createExchangeOrder(userId: string, usdtAmount: number, bankAccountId: string) {
     try {
       if (!configService.get('exchanges_enabled')) {
         throw new Error('Exchanges are paused');
@@ -77,49 +77,13 @@ export class ExchangeService {
       await complianceService.checkWithdrawalLimit(userId, inrAmount);
 
       const idempotencyKey = uuidv4(); 
-      let finalBankAccountId = bankAccountId;
-      
-      if (!finalBankAccountId && bankDetails) {
-        const { data: existingBank } = await supabase
-          .from('bank_accounts')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('account_number', bankDetails.account_number)
-          .eq('ifsc_code', bankDetails.ifsc)
-          .maybeSingle();
-            
-        if (existingBank) {
-          finalBankAccountId = existingBank.id;
-        } else {
-          const { data: newBank, error: createError } = await supabase
-            .from('bank_accounts')
-            .insert({
-              user_id: userId,
-              account_holder_name: bankDetails.account_holder_name,
-              account_number: bankDetails.account_number,
-              ifsc_code: bankDetails.ifsc,
-              bank_name: 'Bank',
-              is_verified: true
-            })
-            .select()
-            .single();
-                
-          if (createError) throw new Error('Failed to save bank');
-          finalBankAccountId = newBank.id;
-        }
-      }
-
-      if (!finalBankAccountId) {
-        throw new Error('Bank account required for exchange');
-      }
-
       // Use RPC for atomic operation
       const { data, error } = await supabase.rpc('create_exchange_order', {
         p_user_id: userId,
         p_usdt_amount: usdtAmount,
         p_inr_amount: inrAmount,
         p_rate: rate,
-        p_bank_account_id: finalBankAccountId,
+        p_bank_account_id: bankAccountId,
         p_idempotency_key: idempotencyKey
       });
 
@@ -145,7 +109,7 @@ export class ExchangeService {
   async getOrders(userId: string) {
     const { data, error } = await supabase
       .from('exchange_orders')
-      .select('*, bank_accounts(*)')
+      .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 

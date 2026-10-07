@@ -7,12 +7,7 @@ import { AuthService } from '../services/auth.service.js';
 
 const createOrderSchema = z.object({
   usdtAmount: z.number().positive(),
-  bankAccountId: z.string().uuid().optional(),
-  bankDetails: z.object({
-    account_number: z.string(),
-    ifsc: z.string(),
-    account_holder_name: z.string()
-  }).optional()
+  bankAccountId: z.string().uuid(),
 });
 
 export class ExchangeController extends BaseController {
@@ -39,8 +34,7 @@ export class ExchangeController extends BaseController {
       const result = await exchangeService.createExchangeOrder(
         req.user.id,
         parsed.data.usdtAmount,
-        parsed.data.bankAccountId,
-        parsed.data.bankDetails
+        parsed.data.bankAccountId
       );
 
       return this.created(res, result);

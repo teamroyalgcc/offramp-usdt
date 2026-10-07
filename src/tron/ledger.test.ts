@@ -55,8 +55,17 @@ test('schema.sql money functions', async () => {
   assert.deepEqual(await acct(), { a: '99.500000', l: '0.000000' }); // 60 + 10 + 20 + 9.5
 
   // sell orders: lock -> paid once / refund
-  const order = (amt: number) => one(`select create_exchange_order($1,$2,$3,90,null,$4) r`, [u, amt, amt * 90, crypto.randomUUID()]).then((x) => x.r);
+  const bank = async (user: string) => (await one(`insert into bank_accounts (user_id, account_holder_name, account_number, ifsc_code) values ($1,'A','1','IFSC0000001') returning id`, [user])).id;
+  const myBank = await bank(u);
+  const order = (amt: number, b: string | null = myBank) => one(`select create_exchange_order($1,$2,$3,90,$4,$5) r`, [u, amt, amt * 90, b, crypto.randomUUID()]).then((x) => x.r);
   assert.equal((await order(1000)).success, false);
+  // the payout bank must be the user's own and not deleted
+  const other = (await one(`insert into users (email) values ('x@y.z') returning id`)).id;
+  assert.deepEqual(await order(1, await bank(other)), { success: false, message: 'Bank account not found' });
+  const deleted = await bank(u);
+  await db.query(`update bank_accounts set deleted_at = now() where id = $1`, [deleted]);
+  assert.equal((await order(1, deleted)).message, 'Bank account not found');
+  assert.equal((await order(1, null)).message, 'Bank account not found');
   await one(`select lock_funds($1, 14.5, 'trim', 'w') r`, [u]); // bring available to 85 for the checks below
   await db.query(`select finalize_withdrawal($1, 14.5, $2)`, [u, crypto.randomUUID()]);
   const o1 = await order(50);
