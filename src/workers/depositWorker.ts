@@ -2,7 +2,7 @@ import { TronWeb } from 'tronweb';
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { burnSunNeeded, currentEgressIp, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
+import { burnSunNeeded, currentEgressIp, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -41,6 +41,14 @@ const log = (msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ at: new Date().toISOString(), svc: 'deposit-worker', msg, ...extra }));
 const alert = (msg: string, extra: Record<string, unknown> = {}) =>
   console.error(JSON.stringify({ at: new Date().toISOString(), svc: 'deposit-worker', level: 'ALERT', msg, ...extra }));
+// Alerts that need a human now: logged and emailed to ALERT_EMAIL.
+const notify = (msg: string, extra: Record<string, unknown> = {}) => {
+  alert(msg, extra);
+  if (config.alertEmail) {
+    sendEmail(config.alertEmail, `[Royal GCC] ${msg}`, `${msg}\n\n${JSON.stringify(extra, null, 2)}\n\nOpen the admin panel > Deposits.`)
+      .catch((e) => alert('alert email failed', { error: e.message }));
+  }
+};
 
 export class DepositWorker {
   private chain = new TronChain({
@@ -212,8 +220,14 @@ export class DepositWorker {
         if (s.status === 'pending') await this.advance(s);
         else await this.track(s);
       } catch (e: any) {
-        log('sweep step failed', { sweep: s.id, status: s.status, error: e.message });
-        await query(`UPDATE sweeps SET next_attempt_at = NOW() + interval '1 minute', last_error = $2, updated_at = NOW() WHERE id = $1`, [s.id, e.message]);
+        // Unexpected error (RPC down, frozen address, ...): back off and email once it looks stuck. It keeps retrying.
+        const errors = s.errors + 1;
+        log('sweep step failed', { sweep: s.id, status: s.status, errors, error: e.message });
+        if (errors === SWEEP_STUCK_ERRORS) notify('sweep stuck: repeated errors', { sweep: s.id, address: s.tron_address, error: e.message });
+        await query(
+          `UPDATE sweeps SET errors = $3, next_attempt_at = NOW() + make_interval(secs => $4), last_error = $2, updated_at = NOW() WHERE id = $1`,
+          [s.id, String(e.message).slice(0, 500), errors, sweepErrorDelaySec(errors)],
+        );
       }
     }
   }
@@ -222,7 +236,7 @@ export class DepositWorker {
     const keys = Object.keys(fields);
     const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
     await query(
-      `UPDATE sweeps SET ${sets}${sets ? ', ' : ''}next_attempt_at = NOW() + make_interval(secs => ${Number(delaySec)}), updated_at = NOW() WHERE id = $1`,
+      `UPDATE sweeps SET ${sets}${sets ? ', ' : ''}errors = 0, next_attempt_at = NOW() + make_interval(secs => ${Number(delaySec)}), updated_at = NOW() WHERE id = $1`,
       [id, ...keys.map((k) => fields[k])],
     );
   }
@@ -231,7 +245,7 @@ export class DepositWorker {
   private async retryOrFail(s: any, error: string, delaySec: number) {
     const attempts = s.attempts + 1;
     if (attempts >= MAX_ATTEMPTS) {
-      alert('sweep failed permanently', { sweep: s.id, error });
+      notify('sweep failed permanently', { sweep: s.id, error });
       await this.setStatus(s.id, { status: 'failed', attempts, tx_id: null, last_error: error });
     } else {
       await this.setStatus(s.id, { status: 'pending', attempts, tx_id: null, last_error: error }, delaySec * 2 ** attempts);
@@ -315,7 +329,7 @@ export class DepositWorker {
             if (e.paidTxId) {
               // TRX left the wallet but no energy arrived: count it, keep the payment hash for follow-up.
               spentSun += costSun;
-              alert('TronNRG paid but delegation not confirmed', { sweep: s.id, paymentTx: e.paidTxId, error: e.message });
+              notify('TronNRG paid but delegation not confirmed', { sweep: s.id, paymentTx: e.paidTxId, error: e.message });
               await this.setStatus(s.id, { cost_trx: sunToTrx(spentSun), order_id: e.paidTxId }, 0);
             }
             log('TronNRG failed, trying burn', { sweep: s.id, error: e.message });
@@ -338,14 +352,14 @@ export class DepositWorker {
     const error = `no_energy:${errors.join(' | ') || 'no provider configured'}`.slice(0, 500);
     // attempts was already counted by the claim above.
     if (s.attempts + 1 >= MAX_ATTEMPTS) {
-      alert('sweep failed permanently', { sweep: s.id, error });
+      notify('sweep failed permanently', { sweep: s.id, error });
       return this.setStatus(s.id, { status: 'failed', last_error: error });
     }
     return this.setStatus(s.id, { last_error: error }, 60 * 2 ** s.attempts);
   }
 
   private async failCost(s: any, costSun: bigint) {
-    alert('sweep cost above cap, funds left in place', { sweep: s.id, costTrx: sunToTrx(costSun), capTrx: config.sweep.maxCostTrx });
+    notify('sweep cost above cap, funds left in place', { sweep: s.id, costTrx: sunToTrx(costSun), capTrx: config.sweep.maxCostTrx });
     return this.setStatus(s.id, { status: 'failed', last_error: `cost_cap:${sunToTrx(costSun)}` });
   }
 
@@ -385,7 +399,7 @@ export class DepositWorker {
     if (result !== 'SUCCESS') return this.retryOrFail(s, `tx_failed:${result}`, 30);
 
     if (!(await this.chain.verifySweep(s.tx_id, USDT, s.tron_address, config.treasuryAddress, BigInt(s.amount_raw)))) {
-      alert('sweep tx succeeded but did not move the expected amount to the treasury', { sweep: s.id, txId: s.tx_id });
+      notify('sweep tx succeeded but did not move the expected amount to the treasury', { sweep: s.id, txId: s.tx_id });
       return this.setStatus(s.id, { status: 'failed', last_error: 'unexpected_receipt' });
     }
     await this.setStatus(s.id, { status: 'confirmed', confirmed_at: new Date(), last_error: null });
@@ -406,7 +420,7 @@ export class DepositWorker {
   /** Runs the audit once a day. The last run time lives in the DB, so restarts do not re-run it. */
   private async dailyAudit() {
     if (Date.now() < this.nextAuditAt) return;
-    const { rows } = await query(`SELECT MAX(created_at) AS last FROM audit_reports`);
+    const { rows } = await query(`SELECT MAX(created_at) AS last FROM audit_reports WHERE trigger = 'daily'`);
     const last = rows[0].last ? new Date(rows[0].last).getTime() : 0;
     if (Date.now() - last < AUDIT_EVERY_MS) {
       this.nextAuditAt = last + AUDIT_EVERY_MS;
@@ -416,15 +430,18 @@ export class DepositWorker {
     this.nextAuditAt = Date.now() + AUDIT_EVERY_MS;
     const { rows: live } = await query(
       `SELECT (SELECT COUNT(*) FROM sweeps WHERE status = 'failed') AS failed,
-              (SELECT COUNT(*) FROM deposits WHERE status = 'review') AS review`,
+              (SELECT COUNT(*) FROM deposits WHERE status = 'review') AS review,
+              (SELECT COUNT(*) FROM sweeps WHERE status IN ('pending', 'submitted')
+                  AND (errors >= ${SWEEP_STUCK_ERRORS} OR created_at < NOW() - interval '36 hours')) AS stuck`,
     );
     const lowFunds = await this.lowFundsWarnings();
-    const problems = report.issues.length + Number(live[0].failed) + Number(live[0].review) + lowFunds.length;
+    const problems = report.issues.length + Number(live[0].failed) + Number(live[0].review) + Number(live[0].stuck) + lowFunds.length;
     if (problems && config.alertEmail) {
       await sendEmail(
         config.alertEmail,
         `[Royal GCC] ${problems} deposit item(s) need attention`,
         `The daily deposit check found ${problems} item(s) that need attention.\n` +
+          (Number(live[0].stuck) ? `- ${live[0].stuck} sweep(s) stuck for over 36 h or failing repeatedly (see last_error)\n` : '') +
           lowFunds.map((w) => `- ${w}\n`).join('') +
           `Open the admin panel > Deposits to see what happened and what to do.`,
       ).catch((e) => alert('alert email failed', { error: e.message }));

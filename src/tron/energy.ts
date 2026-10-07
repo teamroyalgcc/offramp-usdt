@@ -27,6 +27,12 @@ export function sweepDueAt(balanceRaw: bigint, immediateRaw: bigint, openedAt: D
   return balanceRaw >= immediateRaw ? new Date(0) : new Date(openedAt.getTime() + 24 * 60 * 60_000);
 }
 
+/** Errors in a row after which a stuck sweep is emailed to the admin. It keeps retrying. */
+export const SWEEP_STUCK_ERRORS = 10;
+
+/** Back-off after an unexpected sweep step error (RPC down, frozen address, ...): 1, 2, 4 ... min, max 1 h. */
+export const sweepErrorDelaySec = (errors: number) => Math.min(60 * 2 ** Math.max(errors - 1, 0), 3600);
+
 export const sunToTrx = (sun: bigint) => Number(sun) / 1e6;
 
 /** Deterministic per sweep + attempt, so a retried request can never be charged twice by Netts. */

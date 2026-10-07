@@ -401,6 +401,7 @@ CREATE TABLE IF NOT EXISTS public.sweeps (
   rented_at TIMESTAMPTZ,
   tx_id TEXT,
   attempts INT NOT NULL DEFAULT 0,
+  errors INT NOT NULL DEFAULT 0,          -- unexpected step errors in a row; reset by any normal step
   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_error TEXT,
   last_response JSONB,

@@ -402,7 +402,7 @@ export class AdminService {
     if (!explainFailedSweep(failed.rows[0].last_error).canRetry) throw new Error('This transfer must not be retried. Contact the developer.');
     try {
       await query(
-        `UPDATE sweeps SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = NOW(), updated_at = NOW()
+        `UPDATE sweeps SET status = 'pending', attempts = 0, errors = 0, last_error = NULL, next_attempt_at = NOW(), updated_at = NOW()
           WHERE id = $1 AND status = 'failed'`,
         [sweepId],
       );

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { TronWeb } from 'tronweb';
 import { formatUsdt, parseUsdt } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
-import { burnSunNeeded, energyToRent, nettsIdempotencyKey, sweepDueAt, tronNrgTrx } from './energy.js';
+import { burnSunNeeded, energyToRent, nettsIdempotencyKey, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, tronNrgTrx } from './energy.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -69,4 +69,12 @@ test('TronNRG price: 16,250 energy per whole TRX, minimum 4 TRX', () => {
   assert.equal(tronNrgTrx(65_001), 5);
   assert.equal(tronNrgTrx(130_285), 9);  // empty treasury
   assert.equal(tronNrgTrx(10_000), 4);
+});
+
+test('sweep step errors back off to 1 h and alert once stuck', () => {
+  assert.deepEqual([1, 2, 3, 6, 7, 50].map(sweepErrorDelaySec), [60, 120, 240, 1920, 3600, 3600]);
+  // the stuck alert fires before the back-off is so long that a day passes unnoticed
+  let t = 0;
+  for (let e = 1; e < SWEEP_STUCK_ERRORS; e++) t += sweepErrorDelaySec(e);
+  assert.ok(t < 12 * 3600);
 });
