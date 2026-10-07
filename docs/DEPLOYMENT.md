@@ -90,7 +90,7 @@ One Supabase project serves everything. Only the backend talks to it; the app an
    - SMTP & API → **API Keys** → Generate. This is `BREVO_API_KEY`.
 4. **Google sign-in (optional; email OTP works without it).** While `GOOGLE_CLIENT_ID` is unset, the backend refuses Google sign-in (fail closed).
    - Go to <https://console.cloud.google.com> → APIs & Services → Credentials → Create **OAuth client ID** → type **Web application**. This is `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (app).
-   - Create a second OAuth client of type **Android**, with the app's package name and the SHA-1 from Step 9.3. This is `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`.
+   - Create a second OAuth client of type **Android**, with package `com.royalgccforex.app` and the SHA-1 from Step 9.3. This is `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID`.
    - Backend `GOOGLE_CLIENT_ID` = both IDs, comma-separated: `<web id>,<android id>`. Only tokens issued to these IDs, with a verified email, are accepted.
 5. **Generate the login secret:**
 
@@ -203,7 +203,7 @@ There is no testnet step on purpose; see GASFREE_SWEEP_IMPLEMENTATION.md §7. Us
    ```
 
 2. Set the build variables. In expo.dev → project → Environment variables, add these for the **preview** and **production** environments:
-   - `EXPO_PUBLIC_API_URL` = `https://<your-service>.onrender.com/api`
+   - `EXPO_PUBLIC_API_URL` = `https://api.royalgccforex.com/api` (already set in `eas.json`)
    - `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`, `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID` (only if you use Google sign-in)
 3. Run `eas credentials` → Android → let EAS create a keystore → copy its **SHA-1** into the Google Android OAuth client from Step 3.4.
 4. Build the APK:
