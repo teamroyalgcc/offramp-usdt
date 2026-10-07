@@ -14,6 +14,7 @@ import { kycController } from './controllers/kycController.js';
 import bankAccountController from './controllers/bankAccountController.js';
 import configService from './services/configService.js';
 import { authenticate } from './middleware/authMiddleware.js';
+import { requireKyc } from './middleware/requireKyc.js';
 import { adminAuth } from './middleware/adminAuth.js';
 import walletService from './services/walletService.js';
 import exchangeService from './services/exchangeService.js';
@@ -75,7 +76,7 @@ apiRouter.use('/wallet', walletRouter);
 const exchangeRouter = express.Router();
 exchangeRouter.get('/rate', exchangeController.getRate.bind(exchangeController));
 exchangeRouter.get('/orders', authenticate, exchangeController.getOrders.bind(exchangeController));
-exchangeRouter.post('/create-order', authenticate, exchangeController.createOrder.bind(exchangeController));
+exchangeRouter.post('/create-order', authenticate, requireKyc, exchangeController.createOrder.bind(exchangeController));
 
 apiRouter.use('/exchange', exchangeRouter);
 
@@ -84,7 +85,7 @@ apiRouter.use('/exchange', exchangeRouter);
 // sent with the tx hash (verified on-chain). withdrawalWorker (auto-send from
 // SYSTEM_PRIVATE_KEY) is intentionally not started.
 const withdrawalRouter = express.Router();
-withdrawalRouter.post('/', authenticate, withdrawalController.requestWithdrawal.bind(withdrawalController));
+withdrawalRouter.post('/', authenticate, requireKyc, withdrawalController.requestWithdrawal.bind(withdrawalController));
 withdrawalRouter.get('/my', authenticate, withdrawalController.getMyWithdrawals.bind(withdrawalController));
 
 apiRouter.use('/withdrawal', withdrawalRouter);
@@ -100,7 +101,7 @@ apiRouter.use('/kyc', kycRouter);
 // Bank Account Routes
 const bankRouter = express.Router();
 bankRouter.get('/my', authenticate, bankAccountController.listMyAccounts.bind(bankAccountController));
-bankRouter.post('/', authenticate, bankAccountController.addAccount.bind(bankAccountController));
+bankRouter.post('/', authenticate, requireKyc, bankAccountController.addAccount.bind(bankAccountController));
 bankRouter.delete('/:id', authenticate, bankAccountController.deleteAccount.bind(bankAccountController));
 
 apiRouter.use('/bank', bankRouter);

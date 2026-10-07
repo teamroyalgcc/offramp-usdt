@@ -6,6 +6,7 @@ import supabase from '../utils/supabase.js';
 export interface AuthRequest extends Request {
   user?: {
     id: string;
+    kycStatus?: string;
   };
 }
 
@@ -25,9 +26,9 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
   }
   // Frozen or banned accounts are locked out of everything (admin "Freeze user").
   // ponytail: one lookup per request; cache for a few seconds if traffic grows.
-  const { data: user } = await supabase.from('users').select('is_frozen, is_banned').eq('id', decoded.id).maybeSingle();
+  const { data: user } = await supabase.from('users').select('is_frozen, is_banned, kyc_status').eq('id', decoded.id).maybeSingle();
   if (!user) return res.status(401).json({ message: 'Account not found' });
   if (user.is_frozen || user.is_banned) return res.status(403).json({ message: 'Your account is frozen. Please contact support.' });
-  req.user = { id: decoded.id };
+  req.user = { id: decoded.id, kycStatus: user.kyc_status };
   next();
 };
