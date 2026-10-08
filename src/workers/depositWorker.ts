@@ -2,7 +2,7 @@ import { TronWeb } from 'tronweb';
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { burnSunNeeded, currentEgressIp, nextPollAt, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
+import { burnSunNeeded, currentEgressIp, nextPollAt, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, sweepFeeLimitSun, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -276,9 +276,11 @@ export class DepositWorker {
     const res = await this.chain.resources(addr);
     // A USDT transfer needs ~350 bandwidth: the free 600/day covers one sweep, after that it costs ~0.35 TRX.
     const bandwidthOk = res.bandwidth >= TRANSFER_BANDWIDTH || res.trxSun >= SUN / 2n;
-    if (res.energy >= estimate && bandwidthOk) return this.submit(s, balance, SUN);
-    const burnSun = burnSunNeeded(estimate, res.energy, await this.chain.energyFeeSun());
-    if (res.exists && res.trxSun >= burnSun) return this.submit(s, balance, burnSun);
+    const feeSun = await this.chain.energyFeeSun();
+    const feeLimit = sweepFeeLimitSun(estimate, feeSun);
+    if (res.energy >= estimate && bandwidthOk) return this.submit(s, balance, feeLimit);
+    const burnSun = burnSunNeeded(estimate, res.energy, feeSun);
+    if (res.exists && res.trxSun >= burnSun) return this.submit(s, balance, feeLimit);
 
     // Energy or TRX was just bought: give it time to show up before paying again.
     if (s.rented_at && Date.now() - new Date(s.rented_at).getTime() < RENTAL_SETTLE_MS) return this.setStatus(s.id, {}, 5);
@@ -378,7 +380,7 @@ export class DepositWorker {
   }
 
   private async submit(s: any, amount: bigint, feeLimitSun: bigint) {
-    const feeLimit = Number(feeLimitSun < this.capSun ? feeLimitSun : this.capSun);
+    const feeLimit = Number(feeLimitSun);
     const { transaction } = await this.tronWeb.transactionBuilder.triggerSmartContract(
       USDT, 'transfer(address,uint256)', { feeLimit },
       [{ type: 'address', value: config.treasuryAddress }, { type: 'uint256', value: amount.toString() }],

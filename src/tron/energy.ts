@@ -19,6 +19,10 @@ export function burnSunNeeded(energyNeeded: number, energyHave: number, feeSunPe
   return BigInt(missing) * BigInt(feeSunPerEnergy) + SUN;
 }
 
+/** feeLimit for a sweep. TRON caps ALL energy a call may use, rented energy included, at feeLimit / energy price,
+ *  so it must cover the whole estimate. Safe: the address can only burn the little TRX it holds. */
+export const sweepFeeLimitSun = (estimate: number, feeSunPerEnergy: number) => burnSunNeeded(estimate, 0, feeSunPerEnergy);
+
 /**
  * Sweep timing: at or above `immediateRaw` sweep now, otherwise when the sweep
  * row is 24 h old. `force` (admin "Sweep now") makes it due at once. Returns the time the sweep becomes due.

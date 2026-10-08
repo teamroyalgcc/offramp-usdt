@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { TronWeb } from 'tronweb';
 import { formatUsdt, parseUsdt, payoutError, withdrawalAddressError } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
-import { burnSunNeeded, energyToRent, nettsIdempotencyKey, nextPollAt, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, tronNrgTrx } from './energy.js';
+import { burnSunNeeded, energyToRent, nettsIdempotencyKey, nextPollAt, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, sweepFeeLimitSun, tronNrgTrx } from './energy.js';
 
 const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -56,6 +56,8 @@ test('burn fallback: TRX for the missing energy at the live price, plus 1 TRX fo
   assert.equal(burnSunNeeded(64_285, 0, 100), 67_500n * 100n + 1_000_000n); // 7.75 TRX
   assert.equal(burnSunNeeded(64_285, 67_500, 100), 1_000_000n);             // energy already there
   assert.equal(burnSunNeeded(64_285, 70_000, 100), 1_000_000n);
+  // feeLimit must let the call use the whole rented estimate (1 TRX only allowed 10k energy: live failure 2026-10-08)
+  assert.ok(sweepFeeLimitSun(130_286, 100) / 100n >= 130_286n);
 });
 
 test('Netts idempotency key: 64 hex, stable per sweep + attempt, new per attempt', () => {
