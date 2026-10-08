@@ -50,9 +50,11 @@ export const sweepErrorDelaySec = (errors: number) => Math.min(60 * 2 ** Math.ma
 
 export const sunToTrx = (sun: bigint) => Number(sun) / 1e6;
 
-/** Deterministic per sweep + attempt, so a retried request can never be charged twice by Netts. */
-export const nettsIdempotencyKey = (sweepId: string, attempt: number) =>
-  createHash('sha256').update(`${sweepId}:${attempt}`).digest('hex');
+/** Deterministic per sweep + purchase number (purchases already logged), so a request repeated before
+ *  its purchase is logged can never be charged twice, while every new rental (also after an admin Retry,
+ *  which resets attempts) gets a fresh key instead of Netts replaying an old, expired order. */
+export const nettsIdempotencyKey = (sweepId: string, purchaseNo: number) =>
+  createHash('sha256').update(`${sweepId}:${purchaseNo}`).digest('hex');
 
 let egressIp: { ip: string; at: number } | null = null;
 

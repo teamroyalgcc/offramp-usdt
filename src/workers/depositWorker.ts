@@ -308,7 +308,7 @@ export class DepositWorker {
     if (config.sweep.nettsApiKey && res.energy < estimate) {
       const need = energyToRent(estimate);
       try {
-        const o = await nettsRent5m(config.sweep.nettsApiKey, addr, need, nettsIdempotencyKey(s.id, s.attempts));
+        const o = await nettsRent5m(config.sweep.nettsApiKey, addr, need, nettsIdempotencyKey(s.id, (s.purchases ?? []).length));
         const costSun = BigInt(Math.round(o.paidTrx * 1e6));
         if (spentSun + costSun > this.capSun) alert('Netts rental pushed sweep over the cost cap', { sweep: s.id, costTrx: sunToTrx(spentSun + costSun) });
         return bought('netts', costSun, o.orderId);

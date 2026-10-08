@@ -436,7 +436,8 @@ export class AdminService {
       funding,
       sweeps: rows.map((s: any) => ({
         id: s.id, status: s.status, amount: usdt(s.amount_raw), costTrx: Number(s.cost_trx), purchases: s.purchases,
-        txId: s.tx_id, lastError: s.last_error, sweepNow: s.sweep_now, address: s.tron_address, user: s.email,
+        txId: s.tx_id, lastError: s.last_error, sweepNow: s.sweep_now,
+        canRetry: s.status === 'failed' && explainFailedSweep(s.last_error).canRetry, address: s.tron_address, user: s.email,
         createdAt: s.created_at, confirmedAt: s.confirmed_at, nextAttemptAt: s.next_attempt_at,
       })),
     };

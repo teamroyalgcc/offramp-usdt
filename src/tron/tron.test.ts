@@ -60,7 +60,7 @@ test('burn fallback: TRX for the missing energy at the live price, plus 1 TRX fo
   assert.ok(sweepFeeLimitSun(130_286, 100) / 100n >= 130_286n);
 });
 
-test('Netts idempotency key: 64 hex, stable per sweep + attempt, new per attempt', () => {
+test('Netts idempotency key: 64 hex, stable per sweep + purchase number, new per purchase', () => {
   const k = nettsIdempotencyKey('sweep-1', 0);
   assert.match(k, /^[a-f0-9]{64}$/);
   assert.equal(k, nettsIdempotencyKey('sweep-1', 0));
