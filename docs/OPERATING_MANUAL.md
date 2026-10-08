@@ -243,6 +243,8 @@ Only steps 3 and 4 need you.
 1. Open **Dashboard** and look at the **"Deposits need your attention"** panel.
    - "Nothing to do" means you are done with deposits.
    - Otherwise, handle each item (table below).
+   - Below it, **Transfers to treasury** lists each move of deposits to the treasury: status, the energy paid (Netts order or TronNRG/burn tx, in TRX), and the tx link. Its cards show the Netts balance, the operating wallet TRX and the treasury. Top up when a card is low (section 6).
+   - **Sweep now** on a waiting row moves it at once instead of waiting up to 24 hours (amounts under 100 USDT). It costs one energy rental (about 2.6 TRX). Click it once; it greys out while it starts.
 2. Open **Sell Orders (INR)**. For each order with status **processing**:
    1. Open the order. It shows the user's bank details, the exact INR amount, and the **KYC name**. If the KYC name does not match the bank account holder, it shows in red: do not pay; refund instead and contact the user.
    2. Send the INR from the company bank account (IMPS, NEFT or UPI).
@@ -261,7 +263,7 @@ Only steps 3 and 4 need you.
 | You see | What it means | What to do |
 | --- | --- | --- |
 | **Deposit below minimum (not credited yet)** | The user sent less than 10 USDT. | Click **Credit anyway** to add the full amount to their balance, or contact the user first. |
-| **Transfer to treasury failed**, with a **Retry transfer** button | The automatic move to treasury failed. The money is safe in the deposit address. | Read the explanation. If it mentions energy or the cost limit, top up Netts and the operating wallet (section 6) first. Then click **Retry transfer**. |
+| **Transfer to treasury failed**, with a **Retry transfer** button | The automatic move to treasury failed. The money is safe in the deposit address. | Read the explanation. If it mentions energy or the cost limit, top up Netts and the operating wallet (section 6) first. Then click **Retry transfer**. Retry starts a fresh cost limit; the TRX already spent stays listed under Transfers to treasury. |
 | **Transfer to treasury failed**, no button | Unexpected result. Must not be retried. | Contact the developer. Do not touch anything. |
 | **Transfer to treasury is taking longer than usual** | Still retrying on its own. | Nothing, unless it stays for several hours. Then check the alert emails. |
 | **USDT received but not recorded** | USDT arrived while the deposit screen was closed. | Click **Check again**. It finds and credits it. |
@@ -308,12 +310,12 @@ Check balances weekly, and whenever the daily email asks.
 
 | What | Keep at least | How to top up | How to check |
 | --- | --- | --- | --- |
-| **Netts balance** | 50 TRX (warning below 20) | netts.io → Balance → deposit TRX to the address shown | netts.io dashboard, or `netts ok` lines in Render Logs (`balanceTrx`) |
-| **Operating wallet** | 100 TRX (warning below `OPERATING_WALLET_MIN_TRX` = 50) | Send TRX from the treasury or an exchange to the operating wallet address (shown in Render Logs at `"msg":"started"`) | tronscan.org → paste the address |
+| **Netts balance** | 50 TRX (warning below 20) | netts.io → Balance → deposit TRX to the address shown | Admin → Dashboard → Transfers to treasury, the netts.io dashboard, or `netts ok` lines in Render Logs (`balanceTrx`) |
+| **Operating wallet** | 100 TRX (warning below `OPERATING_WALLET_MIN_TRX` = 50) | Send TRX from the treasury or an exchange to the operating wallet address (shown in Admin → Dashboard → Transfers to treasury, and in Render Logs at `"msg":"started"`) | Same card, or tronscan.org |
 | **Treasury TRX** (for sending withdrawals) | 50 TRX | Send TRX from an exchange | TronLink |
 | **Company bank account** (INR payouts) | Enough for a day of sell orders | Convert treasury USDT on an exchange and withdraw INR | Bank |
 
-Cost per sweep: about 2 to 4 TRX with Netts, about 4 to 5 TRX with TronNRG, about 7 TRX by burning, plus about 1.1 TRX once per new deposit address.
+Cost per sweep: about 2 to 4 TRX with Netts, about 4 to 5 TRX with TronNRG, about 7 TRX by burning, plus about 1.1 TRX once per new deposit address (Netts activates new addresses itself). While the treasury holds no USDT, a sweep needs about twice the energy (about 2.6 TRX with Netts, 9 TRX with TronNRG).
 
 ---
 

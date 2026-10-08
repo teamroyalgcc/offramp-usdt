@@ -37,16 +37,16 @@ A user deposits USDT (TRC-20) to their own deposit address, which is derived fro
 
 ### Sweep to treasury (`src/workers/depositWorker.ts`, `src/tron/energy.ts`)
 
-1. **Timing.** An address holding at least `SWEEP_IMMEDIATE_USDT` (100) is swept at once. Smaller balances wait up to 24 hours, so several small deposits share one sweep cost.
+1. **Timing.** An address holding at least `SWEEP_IMMEDIATE_USDT` (100) is swept at once. Smaller balances wait up to 24 hours, so several small deposits share one sweep cost. The admin **Sweep now** button (`sweeps.sweep_now`) skips the wait for one sweep.
 2. **Estimate.** The worker asks the chain how much energy the transfer needs (about 64,000 when the treasury already holds USDT, about 130,000 when it is empty).
 3. **Get energy**, cheapest first, stopping at the first that works:
-   1. **Netts**: rents energy for 5 minutes (`POST /order5m`, estimate + 5%, minimum 61,000), paid from the prepaid Netts balance. Needs the server's IP whitelisted on the Netts key; each call sends that IP in `X-Real-IP`.
+   1. **Netts**: rents energy for 5 minutes (`POST /order5m`, estimate + 5%, minimum 61,000), paid from the prepaid Netts balance. Needs the server's IP whitelisted on the Netts key; each call sends that IP in `X-Real-IP`. Netts activates a brand-new address itself (seen live 2026-10-08).
    2. **TronNRG**: the operating wallet pays TRX on-chain (16,250 energy per TRX, minimum 4 TRX), and TronNRG delegates energy. No IP whitelist.
    3. **Burn**: the operating wallet sends the deposit address enough TRX (about 6.5 to 7.5 TRX) to pay for its own energy. Most expensive; last resort.
 
    Before TronNRG or burn, a brand-new address must be activated: the operating wallet sends it 0.1 TRX (about 1.1 TRX in total, once per address).
-4. **Cost cap.** The total TRX spent on one sweep never exceeds `SWEEP_MAX_COST_TRX` (10). If it would, the sweep stops as `failed` with `cost_cap`, and the money stays safely in the deposit address.
-5. **Send.** The worker signs a normal USDT `transfer` to the treasury with the address's key. The key is derived in memory at that moment and never stored. The transaction id is saved before broadcasting.
+4. **Cost cap.** The total TRX spent on one sweep never exceeds `SWEEP_MAX_COST_TRX` (10). If it would, the sweep stops as `failed` with `cost_cap`, and the money stays safely in the deposit address. Admin Retry resets `cost_trx` (a new cap per run); every purchase stays in `sweeps.purchases`.
+5. **Send.** The worker signs a normal USDT `transfer` to the treasury with the address's key. The key is derived in memory at that moment and never stored. The transaction id is saved before broadcasting. The feeLimit is the **full** estimate × the burn price + 1 TRX: TRON caps all energy a call may use, rented energy included, at feeLimit / price. A 1 TRX feeLimit allowed only 10,000 energy and failed a live sweep "Out of Energy" despite 136,800 rented (2026-10-08). The address can only burn the little TRX it holds, so a high feeLimit risks nothing.
 6. **Confirm.** The worker waits for the solidity node, then checks that exactly that amount arrived at `TREASURY_ADDRESS`. It records `sweeps.provider` (`netts`, `tronnrg`, `burn`, or `activate`) and `sweeps.cost_trx`.
 7. **Retries.**
    - Normal failures retry with backoff. After 5 attempts the sweep becomes `failed`, and an admin can click Retry.
@@ -116,6 +116,7 @@ Revisit KMS when money in flight regularly exceeds what you could afford to lose
 
 ## 6. Monitoring
 
+- **Dashboard → "Transfers to treasury"** lists the last 100 sweeps with status, energy purchases and tx link, plus the Netts, operating wallet and treasury balances (`GET /api/admin/sweeps`). **Sweep now**: `POST /api/admin/sweeps/:id/now`.
 - **Dashboard → "Deposits need attention"** lists failed sweeps (with a plain explanation and a Retry button when it is safe), deposits below the minimum, slow sweeps, and the last audit's findings. The "Run check now" button runs the audit at once.
 - **Daily audit.** Once a day the worker compares each deposit address's on-chain USDT with the records.
   - It records and credits USDT sent while nobody was watching (`unrecorded_funds`).
