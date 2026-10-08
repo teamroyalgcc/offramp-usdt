@@ -423,6 +423,36 @@ export class AdminService {
     return { success: true };
   }
 
+  /** Transfers to treasury with what each one paid for energy, plus the balances that pay for them. */
+  async getSweeps() {
+    const [{ rows }, funding] = await Promise.all([
+      query(`SELECT s.id, s.status, s.amount_raw, s.provider, s.cost_trx, s.purchases, s.tx_id, s.last_error, s.sweep_now,
+                    s.created_at, s.confirmed_at, s.next_attempt_at, a.tron_address, u.email
+               FROM sweeps s JOIN deposit_addresses a ON a.id = s.deposit_address_id LEFT JOIN users u ON u.id = a.user_id
+              ORDER BY s.created_at DESC LIMIT 100`),
+      depositWorker.fundingStatus(),
+    ]);
+    return {
+      funding,
+      sweeps: rows.map((s: any) => ({
+        id: s.id, status: s.status, amount: usdt(s.amount_raw), costTrx: Number(s.cost_trx), purchases: s.purchases,
+        txId: s.tx_id, lastError: s.last_error, sweepNow: s.sweep_now, address: s.tron_address, user: s.email,
+        createdAt: s.created_at, confirmedAt: s.confirmed_at, nextAttemptAt: s.next_attempt_at,
+      })),
+    };
+  }
+
+  /** Admin "Sweep now": a small balance skips its 24 h wait. Same path, cost cap and checks as an automatic sweep. */
+  async sweepNow(sweepId: string, adminId: string) {
+    const r = await query(
+      `UPDATE sweeps SET sweep_now = true, next_attempt_at = NOW(), updated_at = NOW() WHERE id = $1 AND status = 'pending' RETURNING id`,
+      [sweepId],
+    );
+    if (!r.rowCount) throw new Error('This transfer is not waiting (already running, done or failed)');
+    await this.logAction(adminId, 'SWEEP_NOW', 'sweep', sweepId);
+    return { success: true };
+  }
+
   async creditHeldDeposit(depositId: string, adminId: string) {
     const { rows } = await query(`SELECT credit_held_deposit($1) AS r`, [depositId]);
     await this.logAction(adminId, 'DEPOSIT_CREDIT_HELD', 'deposit', depositId, rows[0].r);

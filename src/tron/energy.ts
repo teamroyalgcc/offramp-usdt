@@ -21,10 +21,10 @@ export function burnSunNeeded(energyNeeded: number, energyHave: number, feeSunPe
 
 /**
  * Sweep timing: at or above `immediateRaw` sweep now, otherwise when the sweep
- * row is 24 h old. Returns the time the sweep becomes due.
+ * row is 24 h old. `force` (admin "Sweep now") makes it due at once. Returns the time the sweep becomes due.
  */
-export function sweepDueAt(balanceRaw: bigint, immediateRaw: bigint, openedAt: Date): Date {
-  return balanceRaw >= immediateRaw ? new Date(0) : new Date(openedAt.getTime() + 24 * 60 * 60_000);
+export function sweepDueAt(balanceRaw: bigint, immediateRaw: bigint, openedAt: Date, force = false): Date {
+  return force || balanceRaw >= immediateRaw ? new Date(0) : new Date(openedAt.getTime() + 24 * 60 * 60_000);
 }
 
 /**

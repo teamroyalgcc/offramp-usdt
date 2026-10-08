@@ -269,7 +269,7 @@ export class DepositWorker {
     if (balance === 0n) {
       return this.setStatus(s.id, { status: 'confirmed', amount_raw: '0', last_error: 'nothing_to_sweep', confirmed_at: new Date() });
     }
-    const due = sweepDueAt(balance, this.immediateRaw, new Date(s.created_at));
+    const due = sweepDueAt(balance, this.immediateRaw, new Date(s.created_at), s.sweep_now);
     if (due.getTime() > Date.now()) return this.setStatus(s.id, {}, Math.ceil((due.getTime() - Date.now()) / 1000));
 
     const estimate = await this.chain.estimateTransferEnergy(USDT, addr, treasury, balance);
@@ -293,8 +293,11 @@ export class DepositWorker {
     if (!claimed.rowCount) return;
 
     const opKey = config.sweep.operatingKey.replace(/^0x/, '');
-    const bought = (provider: string, costSun: bigint, orderId: string | null = null) => {
+    const bought = async (provider: string, costSun: bigint, orderId: string | null = null) => {
       log('energy bought', { sweep: s.id, provider, costTrx: sunToTrx(costSun), orderId });
+      // Every purchase is kept so the admin panel can show what each sweep paid, and to whom.
+      await query(`UPDATE sweeps SET purchases = purchases || $2::jsonb WHERE id = $1`,
+        [s.id, JSON.stringify([{ provider, costTrx: sunToTrx(costSun), orderId, at: new Date().toISOString() }])]);
       return this.setStatus(s.id, { provider, order_id: orderId, cost_trx: sunToTrx(spentSun + costSun), rented_at: new Date(), last_error: null }, 3);
     };
     const errors: string[] = [];
@@ -339,6 +342,8 @@ export class DepositWorker {
               // TRX left the wallet but no energy arrived: count it, keep the payment hash for follow-up.
               spentSun += costSun;
               notify('TronNRG paid but delegation not confirmed', { sweep: s.id, paymentTx: e.paidTxId, error: e.message });
+              await query(`UPDATE sweeps SET purchases = purchases || $2::jsonb WHERE id = $1`,
+                [s.id, JSON.stringify([{ provider: 'tronnrg-unconfirmed', costTrx: sunToTrx(costSun), orderId: e.paidTxId, at: new Date().toISOString() }])]);
               await this.setStatus(s.id, { cost_trx: sunToTrx(spentSun), order_id: e.paidTxId }, 0);
             }
             log('TronNRG failed, trying burn', { sweep: s.id, error: e.message });
@@ -457,23 +462,29 @@ export class DepositWorker {
     }
   }
 
+  /** Live balances of the two things that pay for sweeps (admin panel + daily email). */
+  async fundingStatus() {
+    const op = this.operatingAddress();
+    const operatingWallet = op ? { address: op, trx: sunToTrx((await this.chain.resources(op)).trxSun), minTrx: config.sweep.operatingMinTrx } : null;
+    let netts: { balanceTrx: number } | { error: string } | null = null;
+    if (config.sweep.nettsApiKey) {
+      try {
+        netts = { balanceTrx: await nettsBalanceTrx(config.sweep.nettsApiKey) };
+      } catch (e: any) {
+        const ip = await currentEgressIp().catch(() => 'unknown');
+        netts = { error: `Could not read the Netts balance (${e.message.slice(0, 100)}). If the IP is not whitelisted, add ${ip} in Netts > API > IP Whitelist.` };
+      }
+    }
+    return { operatingWallet, netts, treasury: config.treasuryAddress };
+  }
+
   /** Top-up reminders for the two things that pay for sweeps. */
   async lowFundsWarnings(): Promise<string[]> {
     const out: string[] = [];
-    const op = this.operatingAddress();
-    if (op) {
-      const trx = sunToTrx((await this.chain.resources(op)).trxSun);
-      if (trx < config.sweep.operatingMinTrx) out.push(`Operating wallet ${op} has ${trx} TRX. Top it up.`);
-    }
-    if (config.sweep.nettsApiKey) {
-      try {
-        const bal = await nettsBalanceTrx(config.sweep.nettsApiKey);
-        if (!(bal >= 20)) out.push(`Netts balance is ${bal} TRX. Top it up at netts.io.`);
-      } catch (e: any) {
-        const ip = await currentEgressIp().catch(() => 'unknown');
-        out.push(`Could not read the Netts balance (${e.message.slice(0, 100)}). If the IP is not whitelisted, add ${ip} in Netts > API > IP Whitelist.`);
-      }
-    }
+    const { operatingWallet: op, netts } = await this.fundingStatus();
+    if (op && op.trx < op.minTrx) out.push(`Operating wallet ${op.address} has ${op.trx} TRX. Top it up.`);
+    if (netts && 'error' in netts) out.push(netts.error);
+    else if (netts && !(netts.balanceTrx >= 20)) out.push(`Netts balance is ${netts.balanceTrx} TRX. Top it up at netts.io.`);
     return out;
   }
 

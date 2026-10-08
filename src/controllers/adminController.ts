@@ -195,6 +195,23 @@ export class AdminController extends BaseController {
     }
   }
 
+  async getSweeps(_req: AdminRequest, res: Response) {
+    try {
+      return this.ok(res, await adminService.getSweeps());
+    } catch (error: any) {
+      return this.fail(res, error);
+    }
+  }
+
+  async sweepNow(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      return this.ok(res, await adminService.sweepNow(req.params.id as string, req.admin.id));
+    } catch (error: any) {
+      return this.clientError(res, error.message);
+    }
+  }
+
   async creditHeldDeposit(req: AdminRequest, res: Response) {
     try {
       if (!req.admin) return this.unauthorized(res);

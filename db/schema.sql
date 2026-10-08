@@ -488,6 +488,8 @@ CREATE TABLE IF NOT EXISTS public.sweeps (
   order_id TEXT,                           -- Netts order id
   cost_trx NUMERIC(20, 6) NOT NULL DEFAULT 0, -- total TRX spent on energy for this sweep
   rented_at TIMESTAMPTZ,
+  purchases JSONB NOT NULL DEFAULT '[]',   -- every energy/TRX purchase: [{provider, costTrx, orderId, at}]
+  sweep_now BOOLEAN NOT NULL DEFAULT false, -- admin "Sweep now": skip the 24 h wait for small balances
   tx_id TEXT,
   attempts INT NOT NULL DEFAULT 0,
   errors INT NOT NULL DEFAULT 0,          -- unexpected step errors in a row; reset by any normal step

@@ -43,6 +43,7 @@ test('sweep timing: >= threshold now, below it 24 h after the sweep opened', () 
   assert.equal(sweepDueAt(t100, t100, opened).getTime(), 0);
   assert.equal(sweepDueAt(250_000_000n, t100, opened).getTime(), 0);
   assert.equal(sweepDueAt(t100 - 1n, t100, opened).toISOString(), '2026-09-27T00:00:00.000Z');
+  assert.equal(sweepDueAt(1n, t100, opened, true).getTime(), 0); // admin "Sweep now"
 });
 
 test('energy amounts: rent estimate + 5%, never below the Netts minimum', () => {

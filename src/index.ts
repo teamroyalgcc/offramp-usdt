@@ -144,6 +144,8 @@ adminRouter.get('/deposits', adminAuth, adminController.getDeposits.bind(adminCo
 adminRouter.get('/deposits/health', adminAuth, adminController.getDepositHealth.bind(adminController));
 adminRouter.post('/deposits/audit', adminAuth, notStaff, adminController.runDepositAudit.bind(adminController));
 adminRouter.post('/deposits/:id/credit', adminAuth, notStaff, adminController.creditHeldDeposit.bind(adminController));
+adminRouter.get('/sweeps', adminAuth, adminController.getSweeps.bind(adminController));
+adminRouter.post('/sweeps/:id/now', adminAuth, notStaff, adminController.sweepNow.bind(adminController));
 adminRouter.post('/sweeps/:id/retry', adminAuth, notStaff, adminController.retrySweep.bind(adminController));
 adminRouter.post('/deposit-addresses/:id/scan', adminAuth, notStaff, adminController.scanDepositAddress.bind(adminController));
 adminRouter.get('/orders', adminAuth, adminController.getOrders.bind(adminController));
