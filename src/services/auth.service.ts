@@ -1,7 +1,7 @@
 import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
 import { createHash, randomInt } from 'node:crypto';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { checkPin, MAX_PIN_FAILURES, PIN_LOCK_MINUTES, PinCounter } from '../utils/pin.js';
 import { verifyGoogleToken } from '../utils/google.js';
 
@@ -39,7 +39,7 @@ export class AuthService {
   }
 
   static generateVerificationToken() {
-    return uuidv4();
+    return randomUUID();
   }
 
   static generateOTP() {

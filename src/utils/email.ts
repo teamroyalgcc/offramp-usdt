@@ -1,54 +1,21 @@
-import nodemailer from 'nodemailer';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
-const smtpPort = Number(process.env.SMTP_PORT) || 587;
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: smtpPort,
-  secure: smtpPort === 465 || process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  family: 4, 
-  pool: false,
-  connectionTimeout: 30000, 
-  greetingTimeout: 30000,   
-  socketTimeout: 30000,
-  tls: {
-    servername: (process.env.SMTP_HOST || 'smtp.gmail.com').trim(),
-    rejectUnauthorized: false,
-    minVersion: 'TLSv1.2'
-  },
-} as any);
-
 const FROM_NAME = 'Royal GCC Support';
 
-/**
- * Sends through Brevo's HTTPS API when BREVO_API_KEY is set (Render's free tier
- * blocks outbound SMTP ports), otherwise through SMTP.
- */
+/** Sends through Brevo's HTTPS API (Render's free tier blocks outbound SMTP ports). */
 export const sendEmail = async (to: string, subject: string, text: string, html?: string) => {
-  const sender = process.env.EMAIL_FROM || process.env.SMTP_USER;
-  if (process.env.BREVO_API_KEY) {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sender: { name: FROM_NAME, email: sender },
-        to: [{ email: to }],
-        subject,
-        textContent: text,
-        ...(html ? { htmlContent: html } : {}),
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw new Error(`Brevo HTTP ${res.status}: ${await res.text()}`);
-    return;
-  }
-  await transporter.sendMail({ from: `"${FROM_NAME}" <${sender}>`, to, subject, text, html });
+  if (!process.env.BREVO_API_KEY) throw new Error('BREVO_API_KEY is not set');
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sender: { name: FROM_NAME, email: process.env.EMAIL_FROM },
+      to: [{ email: to }],
+      subject,
+      textContent: text,
+      ...(html ? { htmlContent: html } : {}),
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Brevo HTTP ${res.status}: ${await res.text()}`);
 };
 
 /**

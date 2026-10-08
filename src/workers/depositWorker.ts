@@ -174,11 +174,17 @@ export class DepositWorker {
     const known = txIds.length
       ? new Set((await query(`SELECT tx_id FROM deposits WHERE deposit_address_id = $1 AND tx_id = ANY($2)`, [a.id, txIds])).rows.map((r) => r.tx_id))
       : new Set();
+    let failed: Error | undefined;
     for (const txId of txIds.filter((id) => !known.has(id))) {
       for (const t of await this.chain.solidTransfersTo(txId, USDT, a.tron_address)) {
-        await this.record(a.id, t);
+        // one bad log must not block the other deposits to this address
+        await this.record(a.id, t).catch((e) => {
+          alert('deposit record failed', { txId, logIndex: t.logIndex, error: e.message });
+          failed = e;
+        });
       }
     }
+    if (failed) throw failed; // retried in 1 min; last_polled_at stays put so the failed tx is re-read
     await query(
       `UPDATE deposit_addresses SET last_polled_at = $2, next_poll_at = $3 WHERE id = $1`,
       [a.id, startedAt, nextPollAt(startedAt, a.hot_until ? new Date(a.hot_until) : null)],
@@ -442,6 +448,7 @@ export class DepositWorker {
       this.nextAuditAt = last + AUDIT_EVERY_MS;
       return;
     }
+    this.nextAuditAt = Date.now() + 60 * 60_000; // a failing audit retries hourly, not every tick
     const report = await this.runAudit('daily');
     this.nextAuditAt = Date.now() + AUDIT_EVERY_MS;
     const { rows: live } = await query(
@@ -509,7 +516,13 @@ export class DepositWorker {
     );
     const issues: Record<string, unknown>[] = [];
     for (const a of addrs) {
-      const onChain = await this.chain.usdtBalance(USDT, a.tron_address);
+      let onChain: bigint;
+      try {
+        onChain = await this.chain.usdtBalance(USDT, a.tron_address);
+      } catch (e: any) {
+        issues.push({ kind: 'check_failed', depositAddressId: a.id, userId: a.user_id, address: a.tron_address, error: e.message.slice(0, 200) });
+        continue;
+      }
       let diff = onChain - (BigInt(a.received) - BigInt(a.swept));
       // Funds we have no record of: rescan the address first, so a late deposit is credited instead of only reported.
       if (diff > 0n && (await this.scanNow(a.id).catch(() => ({ newDeposits: 0 }))).newDeposits) {

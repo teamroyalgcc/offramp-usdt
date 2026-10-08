@@ -38,17 +38,25 @@ export class ExchangeService {
     const manualRate = Number(configService.get('manual_rate_inr')) || null;
     const expires = configService.get('manual_rate_expires_at');
     const manual = manualRate && expires ? { rate: manualRate, expiresAt: new Date(expires) } : null;
-    const r = userRate(market, spreadPercent, manual, Date.now());
+    // No trustworthy rate: rate null (sells paused), not a 500, so the app and the limits below still load.
+    let r: { rate: number; mode: 'live' | 'manual' } | null = null;
+    let pausedReason: string | null = null;
+    try {
+      r = userRate(market, spreadPercent, manual, Date.now());
+    } catch (e: any) {
+      pausedReason = e.message;
+    }
     return {
-      rate: Number(r.rate.toFixed(2)),
-      mode: r.mode,
+      rate: r ? Number(r.rate.toFixed(2)) : null,
+      mode: r?.mode ?? null,
+      pausedReason,
       marketRate: market ? Number(market.rate.toFixed(2)) : null,
       spreadPercent,
       source: market?.source ?? null,
       sources: market?.sources ?? null,
       updatedAt: market ? new Date(market.updatedAt).toISOString() : null,
-      manualRate: r.mode === 'manual' ? manualRate : null,
-      manualRateExpiresAt: r.mode === 'manual' ? new Date(expires as string).toISOString() : null,
+      manualRate: r?.mode === 'manual' ? manualRate : null,
+      manualRateExpiresAt: r?.mode === 'manual' ? new Date(expires as string).toISOString() : null,
       // Limits the app shows (the DB enforces them): no hardcoded fee/minimums in the app.
       minSellUsdt: Number(configService.get('min_exchange_usdt')),
       minWithdrawalUsdt: Number(configService.get('min_usdt_withdrawal')),
@@ -58,7 +66,9 @@ export class ExchangeService {
 
   /** User rate. Throws when no trustworthy rate exists, which blocks sells. */
   async getLiveRate(): Promise<number> {
-    return (await this.getRateInfo()).rate;
+    const { rate, pausedReason } = await this.getRateInfo();
+    if (rate === null) throw new Error(pausedReason ?? 'Live rate unavailable, try again shortly');
+    return rate;
   }
 
   /** Pause flag, minimum, daily limits (IST day) and idempotency are enforced inside create_exchange_order. */

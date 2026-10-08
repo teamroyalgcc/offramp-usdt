@@ -17,7 +17,7 @@ const configSchema = z.object({
   TRON_SOLIDITY_NODE: z.string().url().default('https://api.trongrid.io'),
   TRON_EVENT_SERVER: z.string().url().default('https://api.trongrid.io'),
   USDT_CONTRACT_ADDRESS: z.string().optional(),
-  // Deposits + sweeps (see docs/GASFREE_SWEEP_IMPLEMENTATION.md). HD_MNEMONIC is read in src/tron/seed.ts.
+  // Deposits + sweeps (see docs/SWEEP_DESIGN.md). HD_MNEMONIC is read in src/tron/seed.ts.
   DEPOSIT_MIN_USDT: z.string().default('10'),        // smaller deposits are held for admin review
   SWEEP_IMMEDIATE_USDT: z.string().default('100'),   // at or above: swept now; below: within 24 h
   SWEEP_MAX_COST_TRX: z.string().default('10').transform(Number), // per sweep, rental + burn

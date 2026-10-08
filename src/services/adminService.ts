@@ -2,14 +2,14 @@ import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
 
 // Admins never see login codes or PIN hashes (a 6-digit PIN hash is brute-forceable).
-const stripSecrets = ({ email_otp, email_otp_expires, transaction_pin_hash, password_hash, ...u }: any) => u;
+const stripSecrets = ({ email_otp, email_otp_expires, transaction_pin_hash, password_hash, pin_code_hash, pin_code_expires, email_verification_token, ...u }: any) => u;
 import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
 import tronService from './tronService.js';
 
 import configService from './configService.js';
 import exchangeService from './exchangeService.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { query } from '../utils/db.js';
 import depositWorker from '../workers/depositWorker.js';
 import { formatUsdt } from '../tron/usdt.js';
@@ -139,7 +139,7 @@ export class AdminService {
     const { data, error } = await supabase
       .from('admins')
       .insert({
-        id: uuidv4(),
+        id: randomUUID(),
         username,
         password_hash,
         role: role || 'admin',
@@ -518,8 +518,10 @@ export class AdminService {
     if (input.spreadPercent !== undefined) changes.exchange_spread_percent = input.spreadPercent;
     if (input.manualRate != null) {
       // Bound a fat-finger: within 10% under the live market (it is never used above it anyway).
+      // Without a live market there is nothing to check against, so refuse (it would be used alone for 24 h).
       const { marketRate } = await exchangeService.getRateInfo().catch(() => ({ marketRate: null }));
-      if (marketRate && (input.manualRate < marketRate * 0.9 || input.manualRate > marketRate)) {
+      if (!marketRate) throw new Error('The live market rate is unavailable, so a manual rate cannot be checked. Try again when it is back.');
+      if (input.manualRate < marketRate * 0.9 || input.manualRate > marketRate) {
         throw new Error(`Manual rate must be between ${(marketRate * 0.9).toFixed(2)} and ${marketRate.toFixed(2)} (live market ${marketRate.toFixed(2)})`);
       }
     }

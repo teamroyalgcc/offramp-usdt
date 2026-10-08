@@ -11,11 +11,12 @@ test('median ignores junk', () => {
 
 const src = (c: number | null, w: number | null, z: number | null) => ({ coindcx: c, wazirx: w, zebpay: z });
 
-test('market = lowest live source; missing sources skipped; far-apart sources refused', () => {
+test('market = lowest live source; missing sources skipped, at least 2 needed; far-apart sources refused', () => {
   const m = pickRate(src(100.24, 100.02, 100.04), 1)!;
   assert.equal(m.rate, 100.02); assert.equal(m.source, 'wazirx');
   assert.equal(pickRate(src(100.24, null, 100.04), 1)!.source, 'zebpay');
   assert.equal(pickRate(src(null, null, null), 1), null);
+  assert.equal(pickRate(src(null, 150, null), 1), null); // one source alone can't be cross-checked
   assert.throws(() => pickRate(src(100, 96, null), 1), /disagree/); // 4.2% apart
 });
 
@@ -31,7 +32,7 @@ test('user rate: live = market - spread; manual override capped at market, used 
 });
 
 test('stale rate refused', () => {
-  const last = { rate: 104, source: 'coindcx' as const, sources: src(104, null, null), updatedAt: 0 };
+  const last = { rate: 104, source: 'coindcx' as const, sources: src(104, 104.1, null), updatedAt: 0 };
   assert.equal(resolveRate(null, last, STALE_MS).rate, 104);
   assert.throws(() => resolveRate(null, last, STALE_MS + 1), /unavailable/);
   assert.throws(() => resolveRate(null, null, 0), /unavailable/);

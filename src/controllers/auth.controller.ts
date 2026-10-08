@@ -2,12 +2,13 @@ import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service.js';
 import { generateToken } from '../utils/jwt.js';
 import supabase from '../utils/supabase.js';
-import { sendOTPEmail } from '../utils/email.js';
+import { sendEmail, sendOTPEmail } from '../utils/email.js';
 import { auditService } from '../services/auditService.js';
 import { randomInt } from 'node:crypto';
 import { checkPin, hashPin, isValidPin, PIN_RESET_HOLD_MS } from '../utils/pin.js';
 import { pinCounter } from '../services/auth.service.js';
 import { googleAudiences } from '../utils/google.js';
+import { publicUser } from '../utils/publicUser.js';
 
 // ponytail: in-memory, single instance. Move to the DB if the API ever runs more than one instance.
 const otpFailures = new Map<string, number>();
@@ -80,7 +81,7 @@ export class AuthController {
       }
 
       const token = generateToken({ id: user.id });
-      return res.status(200).json({ access_token: token, user });
+      return res.status(200).json({ access_token: token, user: publicUser(user) });
 
     } catch (error: any) {
       console.error('Google Auth Error:', error);
@@ -99,13 +100,7 @@ export class AuthController {
       const user = await AuthService.findUserById(userId);
       if (!user) return res.status(404).json({ error: 'User not found.' });
 
-      delete user.password_hash;
-      delete user.email_verification_token;
-      delete user.email_otp;
-      user.has_pin = !!user.transaction_pin_hash;
-      delete user.transaction_pin_hash;
-
-      return res.status(200).json({ user });
+      return res.status(200).json({ user: publicUser(user) });
     } catch (error: any) {
       console.error('Fetch Me Error:', error);
       return res.status(500).json({ error: 'Internal server error.' });
@@ -165,13 +160,7 @@ export class AuthController {
       try {
         await sendOTPEmail(normalizedEmail, otp);
       } catch (mailError: any) {
-        console.error('[EMAIL_SERVICE_FAILURE] Detailed Log:', {
-          message: mailError.message,
-          code: mailError.code,
-          command: mailError.command,
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: process.env.SMTP_PORT || '587'
-        });
+        console.error('[EMAIL_SERVICE_FAILURE] OTP:', mailError.message);
         return res.status(503).json({ error: 'Email delivery service temporarily unavailable. Please try again later.' });
       }
 
@@ -308,7 +297,7 @@ export class AuthController {
       if (!isValidPin(pin)) return res.status(400).json({ error: 'The PIN must be exactly 6 digits.' });
 
       const { data: user, error } = await supabase
-        .from('users').select('transaction_pin_hash, pin_code_hash, pin_code_expires').eq('id', userId).single();
+        .from('users').select('email, transaction_pin_hash, pin_code_hash, pin_code_expires').eq('id', userId).single();
       if (error) throw error;
 
       const viaCode = currentPin === undefined;
@@ -339,6 +328,13 @@ export class AuthController {
 
       const action = !user.transaction_pin_hash ? 'PIN_SET' : reset ? 'PIN_RESET' : 'PIN_CHANGED';
       await auditService.log('user', userId, action, userId, {}, req.ip);
+      if (action !== 'PIN_SET' && user.email) {
+        void sendEmail(user.email, 'Your Royal GCC transaction PIN was changed',
+          `Your transaction PIN was ${reset ? 'reset with an email code' : 'changed'} on ${new Date().toUTCString()}.` +
+          (reset ? ' Sells and withdrawals are paused for 24 hours.' : '') +
+          '\nIf this was not you, contact support immediately.',
+        ).catch((e) => console.error('[EMAIL_SERVICE_FAILURE] PIN change notice:', e.message));
+      }
       return res.status(200).json({ success: true, hasPin: true, holdUntil: holdUntil ?? null });
     } catch (error: any) {
       console.error('Set PIN Error:', error);

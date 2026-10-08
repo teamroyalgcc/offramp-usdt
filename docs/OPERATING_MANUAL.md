@@ -256,7 +256,7 @@ Only steps 3 and 4 need you.
    3. Copy the transaction hash. Click **Mark as sent**, paste it, and click **Confirm sent**. The system checks the blockchain; if the amount or address is wrong, it says so and nothing is marked.
    4. To refuse, click **Reject** and give a reason. The user is refunded.
 4. Open **KYC** and approve or reject new users. Users without approved KYC cannot sell, withdraw, or add a bank account.
-5. Open **Rates** and check that the user rate looks sensible. If the live sources are paused, you can set a fixed rate for 24 hours (it can never be above the live market).
+5. Open **Rates** and check that the user rate looks sensible. You can set a fixed rate for 24 hours. It must be within 10% under the live market, so it can only be set while the live rate works; if the live sources go down later, the fixed rate keeps sells running until it expires.
 
 ### The attention panel, item by item
 
@@ -383,7 +383,7 @@ Resume with `true`. Orders already placed stay in the admin panel: simply do not
 | Situation | What to do |
 | --- | --- |
 | **App says "something went wrong" everywhere** | Check `/health` and Render → Logs. If Render shows a failed deploy, click **Rollback** to the last good deploy. If Supabase shows "paused", click **Restore**. |
-| **Sells show "rate unavailable / sells paused"** | The price sources disagree by more than 3% or are down. Wait 10 minutes. If it persists, set a 24 h fixed rate in **Rates**. |
+| **Sells show "rate unavailable / sells paused"** | The price sources disagree by more than 3%, or fewer than two of CoinDCX / WazirX / ZebPay answer. Wait 10 minutes; it clears by itself when they recover. A fixed rate cannot be set while the live rate is down. |
 | **Netts FAILED in logs / Netts balance unreadable** | Add the egress IP from the log or email to the Netts whitelist (section 5). |
 | **Many failed sweeps** | Top up Netts and the operating wallet, then Retry each. |
 | **Users don't receive login or PIN codes** | Brevo dashboard: check the daily limit (300/day on Free) and that the domain is still authenticated. In Cloudflare, Brevo's DNS records must stay **DNS only** (grey cloud), never proxied. |

@@ -76,12 +76,14 @@ export class TronChain {
       if (log.address?.toLowerCase().slice(-40) !== tokenHex) return;
       if (log.topics?.[0] !== TRANSFER_TOPIC || log.topics.length !== 3) return;
       if (log.topics[2].slice(-40).toLowerCase() !== toHex) return;
+      const amountRaw = BigInt('0x' + (log.data || '0'));
+      if (amountRaw === 0n) return; // 0-USDT address-poisoning spam; record_deposit rejects it
       out.push({
         txId,
         logIndex: i,
         from: fromHex20(log.topics[1]),
         to,
-        amountRaw: BigInt('0x' + (log.data || '0')),
+        amountRaw,
         blockNumber: Number(info.blockNumber),
         blockTs: new Date(Number(info.blockTimeStamp)),
       });

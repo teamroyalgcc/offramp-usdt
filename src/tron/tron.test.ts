@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TronWeb } from 'tronweb';
-import { formatUsdt, parseUsdt, payoutError, withdrawalAddressError } from './usdt.js';
+import { formatUsdt, normalizeTxHash, parseUsdt, payoutError, withdrawalAddressError } from './usdt.js';
 import { accountXpub, deriveAddressFromXpub, derivePrivateKey } from './hd.js';
 import { burnSunNeeded, energyToRent, nettsIdempotencyKey, nextPollAt, SWEEP_STUCK_ERRORS, sweepDueAt, sweepErrorDelaySec, sweepFeeLimitSun, tronNrgTrx } from './energy.js';
 
@@ -110,4 +110,10 @@ test('withdrawal address: base58 only, never the treasury or the USDT contract',
   assert.match(withdrawalAddressError('41' + '0'.repeat(40), [])!, /Invalid/);                     // hex form
   assert.match(withdrawalAddressError('TSqnzJg2zyQPx3NKfW4XqULaq3h5vuKr66', [])!, /Invalid/);     // bad checksum
   assert.match(withdrawalAddressError(undefined, [])!, /Invalid/);
+});
+
+test('withdrawal tx hash: one canonical form, so letter case or 0x cannot reuse a payout', () => {
+  const h = 'ab'.repeat(32);
+  for (const v of [h, h.toUpperCase(), '0x' + h, ` 0X${h.toUpperCase()} `]) assert.equal(normalizeTxHash(v), h);
+  for (const bad of ['', 'ab'.repeat(31), h + 'a', 'zz'.repeat(32), undefined]) assert.equal(normalizeTxHash(bad), null);
 });

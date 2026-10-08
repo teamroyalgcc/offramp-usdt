@@ -1,7 +1,7 @@
 import supabase from '../utils/supabase.js';
 import config from '../config/index.js';
 import { TronChain } from '../tron/chain.js';
-import { formatUsdt, parseUsdt, payoutError } from '../tron/usdt.js';
+import { formatUsdt, normalizeTxHash, parseUsdt, payoutError } from '../tron/usdt.js';
 
 const chain = new TronChain({
   fullNode: config.tron.fullNode,
@@ -58,7 +58,8 @@ export class WithdrawalService {
     if (error || !w) throw new Error('Withdrawal not found');
     if (!['pending', 'processing'].includes(w.status)) throw new Error(`Withdrawal is already ${w.status}`);
 
-    const hash = txHash.trim().replace(/^0x/, '');
+    const hash = normalizeTxHash(txHash);
+    if (!hash) throw new Error('The transaction hash must be 64 hex characters');
     const { count } = await supabase.from('usdt_withdrawals').select('id', { count: 'exact', head: true }).eq('tx_hash', hash);
     if (count) throw new Error('This transaction hash is already used for another withdrawal');
 

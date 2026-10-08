@@ -26,12 +26,14 @@ export function median(xs: number[]): number | null {
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 }
 
-/** Lowest available source; throws if sources are too far apart. Null if none is available. */
+export const MIN_SOURCES = 2; // one source alone can't be cross-checked, so a glitch there could set the price
+
+/** Lowest available source; throws if sources are too far apart. Null if fewer than MIN_SOURCES are available. */
 export function pickRate(sources: Sources, now: number): MarketRate | null {
   const live = (Object.entries(sources) as [SourceName, number | null][])
     .filter((e): e is [SourceName, number] => Number.isFinite(e[1]) && (e[1] as number) > 0)
     .sort((a, b) => a[1] - b[1]);
-  if (!live.length) return null;
+  if (live.length < MIN_SOURCES) return null;
   const [lowName, low] = live[0];
   const high = live[live.length - 1][1];
   if (high / low - 1 > MAX_SPREAD) {

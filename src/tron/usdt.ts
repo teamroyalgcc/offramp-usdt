@@ -43,3 +43,9 @@ export function withdrawalAddressError(addr: unknown, denied: string[]): string 
   if (denied.includes(addr)) return 'This address cannot receive withdrawals';
   return null;
 }
+
+/** Canonical tx hash (64 lowercase hex, no 0x) or null, so one payout can't be reused by changing letter case. */
+export function normalizeTxHash(txHash: unknown): string | null {
+  const h = String(txHash ?? '').trim().replace(/^0x/i, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(h) ? h : null;
+}
