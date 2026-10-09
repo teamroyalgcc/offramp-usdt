@@ -40,7 +40,7 @@ A user deposits USDT (TRC-20) to their own deposit address, which is derived fro
 1. **Timing.** An address holding at least `SWEEP_IMMEDIATE_USDT` (100) is swept at once. Smaller balances wait up to 24 hours, so several small deposits share one sweep cost. The admin **Sweep now** button (`sweeps.sweep_now`) skips the wait for one sweep.
 2. **Estimate.** The worker asks the chain how much energy the transfer needs (about 64,000 when the treasury already holds USDT, about 130,000 when it is empty).
 3. **Get energy**, cheapest first, stopping at the first that works:
-   1. **Netts**: rents energy for 5 minutes (`POST /order5m`, estimate + 5%, minimum 61,000), paid from the prepaid Netts balance. Needs the server's IP whitelisted on the Netts key; each call sends that IP in `X-Real-IP`. Netts activates a brand-new address itself (seen live 2026-10-08).
+   1. **Netts**: rents energy for 5 minutes (`POST /order5m`, estimate + 5%, minimum 61,000), paid from the prepaid Netts balance. Needs the server's IP whitelisted on the Netts key; each call sends that IP in `X-Real-IP`. Netts activates a brand-new address itself (seen live 2026-10-08). If `/order5m` fails for any reason (its pools are Netts-only and can run dry at peak), the worker tries `/order1h` once (standard rate, external providers too) before TronNRG.
    2. **TronNRG**: the operating wallet pays TRX on-chain (16,250 energy per TRX, minimum 4 TRX), and TronNRG delegates energy. No IP whitelist.
    3. **Burn**: the operating wallet sends the deposit address enough TRX (about 6.5 to 7.5 TRX) to pay for its own energy. Most expensive; last resort.
 

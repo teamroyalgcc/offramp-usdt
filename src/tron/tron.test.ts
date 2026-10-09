@@ -65,6 +65,9 @@ test('Netts idempotency key: 64 hex, stable per sweep + purchase number, new per
   assert.match(k, /^[a-f0-9]{64}$/);
   assert.equal(k, nettsIdempotencyKey('sweep-1', 0));
   assert.notEqual(k, nettsIdempotencyKey('sweep-1', 1));
+  // the 1h fallback is a different order, so it must not replay the failed 5m request
+  assert.equal(nettsIdempotencyKey('sweep-1', 0, '5m'), k);
+  assert.notEqual(nettsIdempotencyKey('sweep-1', 0, '1h'), k);
 });
 
 test('TronNRG price: 16,250 energy per whole TRX, minimum 4 TRX', () => {

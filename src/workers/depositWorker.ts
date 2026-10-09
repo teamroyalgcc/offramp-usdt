@@ -2,7 +2,7 @@ import { TronWeb } from 'tronweb';
 import config from '../config/index.js';
 import { query } from '../utils/db.js';
 import { TronChain } from '../tron/chain.js';
-import { burnSunNeeded, currentEgressIp, nextPollAt, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent5m, sunToTrx, sweepDueAt, sweepFeeLimitSun, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
+import { burnSunNeeded, currentEgressIp, nextPollAt, SWEEP_STUCK_ERRORS, sweepErrorDelaySec, energyToRent, nettsBalanceTrx, nettsIdempotencyKey, nettsRent, sunToTrx, sweepDueAt, sweepFeeLimitSun, tronNrgRent, tronNrgTrx } from '../tron/energy.js';
 import { derivePrivateKey } from '../tron/hd.js';
 import { loadSeedPhrase } from '../tron/seed.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
@@ -313,14 +313,17 @@ export class DepositWorker {
     // 1. Netts. Only rents energy; if just bandwidth is missing, skip to burn.
     if (config.sweep.nettsApiKey && res.energy < estimate) {
       const need = energyToRent(estimate);
-      try {
-        const o = await nettsRent5m(config.sweep.nettsApiKey, addr, need, nettsIdempotencyKey(s.id, (s.purchases ?? []).length));
-        const costSun = BigInt(Math.round(o.paidTrx * 1e6));
-        if (spentSun + costSun > this.capSun) alert('Netts rental pushed sweep over the cost cap', { sweep: s.id, costTrx: sunToTrx(spentSun + costSun) });
-        return bought('netts', costSun, o.orderId);
-      } catch (e: any) {
-        errors.push(e.message);
-        log('Netts rental failed, trying next provider', { sweep: s.id, error: e.message });
+      // 5m first (cheapest); 1h if it fails (Netts docs: 5m pools can run dry at peak).
+      for (const period of ['5m', '1h'] as const) {
+        try {
+          const o = await nettsRent(config.sweep.nettsApiKey, addr, need, nettsIdempotencyKey(s.id, (s.purchases ?? []).length, period), period);
+          const costSun = BigInt(Math.round(o.paidTrx * 1e6));
+          if (spentSun + costSun > this.capSun) alert('Netts rental pushed sweep over the cost cap', { sweep: s.id, costTrx: sunToTrx(spentSun + costSun) });
+          return bought('netts', costSun, o.orderId); // orderId 5M… or 1H… tells which
+        } catch (e: any) {
+          errors.push(`${period} ${e.message}`);
+          log('Netts rental failed, trying next provider', { sweep: s.id, period, error: e.message });
+        }
       }
     }
 

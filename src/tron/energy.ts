@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 // No config import here, so tests can load this file without env vars.
 
 const NETTS = 'https://netts.io/apiv2';
-export const NETTS_MIN_ENERGY = 61_000; // /order5m bounds: 61,000..650,000
+export const NETTS_MIN_ENERGY = 61_000; // /order5m bounds: 61,000..650,000 (/order1h: ..3,000,000)
 export const SWEEP_ENERGY_HEADROOM = 1.05;
 const SUN = 1_000_000n;
 
@@ -53,8 +53,8 @@ export const sunToTrx = (sun: bigint) => Number(sun) / 1e6;
 /** Deterministic per sweep + purchase number (purchases already logged), so a request repeated before
  *  its purchase is logged can never be charged twice, while every new rental (also after an admin Retry,
  *  which resets attempts) gets a fresh key instead of Netts replaying an old, expired order. */
-export const nettsIdempotencyKey = (sweepId: string, purchaseNo: number) =>
-  createHash('sha256').update(`${sweepId}:${purchaseNo}`).digest('hex');
+export const nettsIdempotencyKey = (sweepId: string, purchaseNo: number, period: '5m' | '1h' = '5m') =>
+  createHash('sha256').update(period === '5m' ? `${sweepId}:${purchaseNo}` : `${sweepId}:${purchaseNo}:${period}`).digest('hex');
 
 let egressIp: { ip: string; at: number } | null = null;
 
@@ -85,11 +85,12 @@ async function netts(apiKey: string, method: 'GET' | 'POST', path: string, body?
 }
 
 /**
- * Rents energy for 5 minutes, delegated to `receiver` (Netts activates it if needed).
- * Returns only after delegation. Throws on any failure; 208 (cached duplicate) counts as success.
+ * Rents energy for 5 minutes or 1 hour, delegated to `receiver` (Netts activates it if needed).
+ * 5m is cheaper but served only from Netts' own pools; 1h also uses external providers.
+ * Throws on any failure; 208 (cached duplicate) counts as success.
  */
-export async function nettsRent5m(apiKey: string, receiver: string, amount: number, idemKey: string) {
-  const r = await netts(apiKey, 'POST', '/order5m', { amount, receiveAddress: receiver }, idemKey);
+export async function nettsRent(apiKey: string, receiver: string, amount: number, idemKey: string, period: '5m' | '1h' = '5m') {
+  const r = await netts(apiKey, 'POST', `/order${period}`, { amount, receiveAddress: receiver }, idemKey);
   const d = r.json?.detail;
   if ((r.status === 200 || r.status === 208) && d?.code === 10000) {
     return { orderId: String(d.data.orderId), paidTrx: Number(d.data.paidTRX) };
