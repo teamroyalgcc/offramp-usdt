@@ -96,9 +96,13 @@ export class ExchangeService {
         throw new Error(data.message || 'Exchange failed');
       }
 
+      // The 12-digit order number is shown on the app's success screen and receipt.
+      const orderId = data.order_id || data;
+      const { data: row } = await supabase.from('exchange_orders').select('order_no').eq('id', orderId).maybeSingle();
       return {
         success: true,
-        orderId: data.order_id || data,
+        orderId,
+        orderNo: row?.order_no ? String(row.order_no) : null,
         inrAmount,
         rate
       };
