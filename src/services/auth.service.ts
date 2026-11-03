@@ -2,7 +2,9 @@ import supabase from '../utils/supabase.js';
 import bcrypt from 'bcryptjs';
 import { createHash, randomInt } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
-import { checkPin, MAX_PIN_FAILURES, PIN_LOCK_MINUTES, PinCounter } from '../utils/pin.js';
+import { checkPin, MAX_PIN_FAILURES, PIN_DIGITS, PIN_LOCK_MINUTES, PinCounter } from '../utils/pin.js';
+
+export const PIN_UPGRADE_MESSAGE = 'Please set a new 4-digit transaction PIN (Profile → Transaction PIN).';
 import { verifyGoogleToken } from '../utils/google.js';
 
 export class AuthService {
@@ -53,12 +55,14 @@ export class AuthService {
 
   // Money-out guard. Returns null when the transaction PIN is correct, otherwise the message to show.
   static async verifyTransactionPin(userId: string, pin: unknown) {
-    const { data, error } = await supabase.from('users').select('transaction_pin_hash, pin_hold_until').eq('id', userId).single();
+    const { data, error } = await supabase.from('users').select('transaction_pin_hash, pin_hold_until, pin_digits').eq('id', userId).single();
     if (error) throw error;
     if (data.pin_hold_until && new Date(data.pin_hold_until) > new Date()) {
       const until = new Date(data.pin_hold_until).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      return `Your PIN was reset recently. For your safety, sells and withdrawals unlock at ${until} IST.`;
+      return `Your PIN was reset recently. For your safety, exchanges and withdrawals unlock at ${until} IST.`;
     }
+    // Accounts from before the 4-digit PIN must set a new one first (the app opens the PIN screen on this message).
+    if (data.transaction_pin_hash && data.pin_digits !== PIN_DIGITS) return PIN_UPGRADE_MESSAGE;
     return checkPin(pinCounter, userId, pin, data.transaction_pin_hash);
   }
 }

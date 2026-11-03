@@ -13,10 +13,17 @@ const updateStatusSchema = z.object({
   note: z.string().optional(),
 });
 
-// A negative spread would pay users above market; manualRate = fixed user rate for 24 h, null clears it.
+// manualRate = the rate users get until it is changed; null clears it, which pauses exchanges.
 const updateRateSchema = z.object({
-  spreadPercent: z.number().min(0).max(10).optional(),
   manualRate: z.number().positive().max(1000).nullable().optional(),
+});
+
+const semver = z.string().regex(/^\d+\.\d+\.\d+$/, 'Version must look like 1.2.3');
+const appReleaseSchema = z.object({
+  latestVersion: semver.nullable().optional(),
+  minVersion: semver.nullable().optional(),
+  apkUrl: z.string().url().startsWith('https://').nullable().optional(),
+  releaseNotes: z.string().max(2000).nullable().optional(),
 });
 
 const freezeSchema = z.object({
@@ -281,6 +288,17 @@ export class AdminController extends BaseController {
       return this.ok(res, data);
     } catch (error: any) {
       return this.fail(res, error);
+    }
+  }
+
+  async updateAppRelease(req: AdminRequest, res: Response) {
+    try {
+      if (!req.admin) return this.unauthorized(res);
+      const parsed = appReleaseSchema.safeParse(req.body);
+      if (!parsed.success) return this.clientError(res, parsed.error.issues[0].message);
+      return this.ok(res, await adminService.updateAppRelease(parsed.data, req.admin.id));
+    } catch (error: any) {
+      return this.clientError(res, error.message || error);
     }
   }
 

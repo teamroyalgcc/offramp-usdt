@@ -8,7 +8,6 @@ import config from '../config/index.js';
 import tronService from './tronService.js';
 
 import configService from './configService.js';
-import exchangeService from './exchangeService.js';
 import { randomUUID } from 'node:crypto';
 import { query } from '../utils/db.js';
 import depositWorker from '../workers/depositWorker.js';
@@ -240,6 +239,7 @@ export class AdminService {
 
   async getDashboardData() {
     const treasuryAddress = config.treasuryAddress;
+    // Read fresh on every request (the panel polls it); a failed read reports null, never a stale or fake 0.
     const treasuryBalance = await tronService.getTreasuryBalance(treasuryAddress);
 
     const [
@@ -513,25 +513,33 @@ export class AdminService {
     return { success: true, status: rows[0].r.status };
   }
 
-  async updateRateSettings(input: { spreadPercent?: number; manualRate?: number | null }, adminId: string) {
+  async updateRateSettings(input: { manualRate?: number | null }, adminId: string) {
     const changes: Record<string, unknown> = {};
-    if (input.spreadPercent !== undefined) changes.exchange_spread_percent = input.spreadPercent;
-    if (input.manualRate != null) {
-      // Bound a fat-finger: within 10% under the live market (it is never used above it anyway).
-      // Without a live market there is nothing to check against, so refuse (it would be used alone for 24 h).
-      const { marketRate } = await exchangeService.getRateInfo().catch(() => ({ marketRate: null }));
-      if (!marketRate) throw new Error('The live market rate is unavailable, so a manual rate cannot be checked. Try again when it is back.');
-      if (input.manualRate < marketRate * 0.9 || input.manualRate > marketRate) {
-        throw new Error(`Manual rate must be between ${(marketRate * 0.9).toFixed(2)} and ${marketRate.toFixed(2)} (live market ${marketRate.toFixed(2)})`);
-      }
+    // The manual rate is the rate users get, as typed, until the admin changes it (no expiry, no spread,
+    // no external feed). Only a sanity bound against a fat-finger; the admin panel confirms before saving.
+    if (input.manualRate != null && (input.manualRate < 50 || input.manualRate > 500)) {
+      throw new Error('The rate must be between 50 and 500 INR per USDT');
     }
     if (input.manualRate !== undefined) {
       changes.manual_rate_inr = input.manualRate;
-      changes.manual_rate_expires_at = input.manualRate === null ? null : new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+      changes.manual_rate_expires_at = null;
     }
     if (!Object.keys(changes).length) throw new Error('Nothing to update');
     const result = await configService.update(changes as any);
     await this.logAction(adminId, 'UPDATE_RATE_SETTINGS', 'system_settings', 'rate', changes);
+    return result;
+  }
+
+  /** In-app update settings: the app compares its version with app_latest_version and downloads app_apk_url. */
+  async updateAppRelease(input: { latestVersion?: string | null; minVersion?: string | null; apkUrl?: string | null; releaseNotes?: string | null }, adminId: string) {
+    const changes: Record<string, unknown> = {};
+    if (input.latestVersion !== undefined) changes.app_latest_version = input.latestVersion;
+    if (input.minVersion !== undefined) changes.app_min_version = input.minVersion;
+    if (input.apkUrl !== undefined) changes.app_apk_url = input.apkUrl;
+    if (input.releaseNotes !== undefined) changes.app_release_notes = input.releaseNotes;
+    if (!Object.keys(changes).length) throw new Error('Nothing to update');
+    const result = await configService.update(changes as any);
+    await this.logAction(adminId, 'UPDATE_APP_RELEASE', 'system_settings', 'app_release', changes);
     return result;
   }
 

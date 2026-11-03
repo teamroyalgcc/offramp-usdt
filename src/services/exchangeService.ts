@@ -2,12 +2,10 @@ import supabase from '../utils/supabase.js';
 import configService from './configService.js';
 import { formatUsdt, parseUsdt } from '../tron/usdt.js';
 
-import { CACHE_MS, fetchMarketRate, MarketRate, resolveRate, userRate } from './marketRate.js';
+import { userRate } from './rate.js';
 
 export class ExchangeService {
   private static instance: ExchangeService;
-  private last: MarketRate | null = null;
-  private inflight: Promise<MarketRate> | null = null;
 
   private constructor() {}
 
@@ -18,31 +16,15 @@ export class ExchangeService {
     return ExchangeService.instance;
   }
 
-  /** Market rate, refreshed at most every CACHE_MS. Throws if stale (> 2 min) or sources disagree. */
-  private async marketRate(): Promise<MarketRate> {
-    if (this.last && Date.now() - this.last.updatedAt < CACHE_MS) return this.last;
-    // One refresh at a time; concurrent callers share it.
-    this.inflight ??= fetchMarketRate()
-      .then((fresh) => (this.last = resolveRate(fresh, this.last, Date.now())))
-      .finally(() => (this.inflight = null));
-    return this.inflight;
-  }
-
-  /** Everything the app and the admin Rates page show. Throws only when no rate can be given (sells pause). */
+  /** Everything the app and the admin Rates page show. rate is null (exchanges paused) while no rate is set. */
   async getRateInfo() {
-    const market = await this.marketRate().catch((e) => {
-      console.error('[EXCHANGE_SERVICE] market rate:', e.message);
-      return null;
-    });
-    const spreadPercent = Number(configService.get('exchange_spread_percent') || 0);
     const manualRate = Number(configService.get('manual_rate_inr')) || null;
     const expires = configService.get('manual_rate_expires_at');
-    const manual = manualRate && expires ? { rate: manualRate, expiresAt: new Date(expires) } : null;
-    // No trustworthy rate: rate null (sells paused), not a 500, so the app and the limits below still load.
-    let r: { rate: number; mode: 'live' | 'manual' } | null = null;
+    const manual = manualRate ? { rate: manualRate, expiresAt: expires ? new Date(expires) : null } : null;
+    let r: { rate: number; mode: 'manual' } | null = null;
     let pausedReason: string | null = null;
     try {
-      r = userRate(market, spreadPercent, manual, Date.now());
+      r = userRate(manual, Date.now());
     } catch (e: any) {
       pausedReason = e.message;
     }
@@ -50,13 +32,9 @@ export class ExchangeService {
       rate: r ? Number(r.rate.toFixed(2)) : null,
       mode: r?.mode ?? null,
       pausedReason,
-      marketRate: market ? Number(market.rate.toFixed(2)) : null,
-      spreadPercent,
-      source: market?.source ?? null,
-      sources: market?.sources ?? null,
-      updatedAt: market ? new Date(market.updatedAt).toISOString() : null,
-      manualRate: r?.mode === 'manual' ? manualRate : null,
-      manualRateExpiresAt: r?.mode === 'manual' ? new Date(expires as string).toISOString() : null,
+      manualRate: r ? manualRate : null,
+      manualRateExpiresAt: r && expires ? new Date(expires as string).toISOString() : null,
+      updatedAt: configService.get('updated_at') ?? null,
       // Limits the app shows (the DB enforces them): no hardcoded fee/minimums in the app.
       minSellUsdt: Number(configService.get('min_exchange_usdt')),
       minWithdrawalUsdt: Number(configService.get('min_usdt_withdrawal')),
@@ -64,10 +42,10 @@ export class ExchangeService {
     };
   }
 
-  /** User rate. Throws when no trustworthy rate exists, which blocks sells. */
+  /** The rate for a new order. Throws while no rate is set, which blocks exchanges. */
   async getLiveRate(): Promise<number> {
     const { rate, pausedReason } = await this.getRateInfo();
-    if (rate === null) throw new Error(pausedReason ?? 'Live rate unavailable, try again shortly');
+    if (rate === null) throw new Error(pausedReason ?? 'No exchange rate is set');
     return rate;
   }
 
@@ -94,9 +72,13 @@ export class ExchangeService {
         throw new Error(data.message || 'Exchange failed');
       }
 
+      // The 12-digit order number is shown on the app's success screen and receipt.
+      const orderId = data.order_id || data;
+      const { data: row } = await supabase.from('exchange_orders').select('order_no').eq('id', orderId).maybeSingle();
       return {
         success: true,
-        orderId: data.order_id || data,
+        orderId,
+        orderNo: row?.order_no ? String(row.order_no) : null,
         inrAmount,
         rate
       };
@@ -106,10 +88,11 @@ export class ExchangeService {
     }
   }
 
+  /** The user's orders with the payout bank account (beneficiary name shown in the app's history and receipt). */
   async getOrders(userId: string) {
     const { data, error } = await supabase
       .from('exchange_orders')
-      .select('*')
+      .select('*, bank_accounts(account_holder_name, account_number, ifsc_code, bank_name)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 

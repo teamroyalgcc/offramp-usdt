@@ -159,9 +159,20 @@ adminRouter.post('/withdrawals/:id/approve', adminAuth, notStaff, withdrawalCont
 adminRouter.post('/withdrawals/:id/reject', adminAuth, notStaff, withdrawalController.adminReject.bind(withdrawalController));
 
 adminRouter.post('/settings/rate', adminAuth, notStaff, adminController.updateUSDTSpread.bind(adminController));
+adminRouter.post('/settings/app-release', adminAuth, notStaff, adminController.updateAppRelease.bind(adminController));
 adminRouter.get('/audit', adminAuth, adminController.getAuditLogs.bind(adminController));
 
 apiRouter.use('/admin', adminRouter);
+
+// In-app update check (public): the app compares its own version with latestVersion / minVersion.
+apiRouter.get('/app/version', (req, res) => {
+  res.json({
+    latestVersion: configService.get('app_latest_version') || null,
+    minVersion: configService.get('app_min_version') || null,
+    apkUrl: configService.get('app_apk_url') || null,
+    releaseNotes: configService.get('app_release_notes') || null,
+  });
+});
 
 app.use('/api', apiRouter);
 

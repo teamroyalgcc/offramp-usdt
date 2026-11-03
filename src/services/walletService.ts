@@ -11,8 +11,8 @@ export const WATCH_WINDOW_MS = 60 * 60 * 1000;
 
 const STATEMENT_LABELS: Record<string, string> = {
   deposit: 'Deposit',
-  exchange_lock: 'Sell order (locked)',
-  exchange_refund: 'Sell order refunded',
+  exchange_lock: 'Exchange order (locked)',
+  exchange_refund: 'Exchange order refunded',
   withdrawal_lock: 'Withdrawal (locked)',
   withdrawal_refund: 'Withdrawal refunded',
 };

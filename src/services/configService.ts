@@ -9,8 +9,13 @@ export interface SystemConfig {
   withdrawals_enabled: boolean;
   deposits_enabled: boolean;
   exchanges_enabled: boolean;
-  manual_rate_inr: number | null;         // admin override, see marketRate.userRate
+  manual_rate_inr: number | null;         // the rate users get, set by the admin (see rate.ts)
   manual_rate_expires_at: string | null;
+  app_latest_version: string | null;      // in-app update, see appController
+  app_min_version: string | null;
+  app_apk_url: string | null;
+  app_release_notes: string | null;
+  updated_at?: string | null;
 }
 
 export class ConfigService {
@@ -25,7 +30,11 @@ export class ConfigService {
     deposits_enabled: true,
     exchanges_enabled: true,
     manual_rate_inr: null,
-    manual_rate_expires_at: null
+    manual_rate_expires_at: null,
+    app_latest_version: null,
+    app_min_version: null,
+    app_apk_url: null,
+    app_release_notes: null,
   };
   private isLoaded: boolean = false;
 
@@ -65,7 +74,11 @@ export class ConfigService {
       'deposits_enabled',
       'exchanges_enabled',
       'manual_rate_inr',
-      'manual_rate_expires_at'
+      'manual_rate_expires_at',
+      'app_latest_version',
+      'app_min_version',
+      'app_apk_url',
+      'app_release_notes',
     ];
 
     const cleanUpdates: Partial<SystemConfig> = {};
