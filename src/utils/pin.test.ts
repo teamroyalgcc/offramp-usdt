@@ -17,33 +17,35 @@ test('transaction PIN: DB counter, parallel guesses, lock survives restart', asy
   };
   const user = async (email: string) => (await db.query<any>(`insert into users (email) values ($1) returning id`, [email])).rows[0].id;
   const u1 = await user('a@b.c'), u2 = await user('d@e.f'), u3 = await user('g@h.i');
-  const hash = await hashPin('123456');
+  const hash = await hashPin('1234');
 
-  assert.equal(isValidPin('12345'), false);
-  assert.equal(isValidPin('12345a'), false);
-  assert.match((await checkPin(counter, u1, '123456', null))!, /Set a transaction PIN/);
-  assert.match((await checkPin(counter, u1, undefined, hash))!, /6-digit/);
-  assert.equal(await checkPin(counter, u1, '123456', hash), null);
+  assert.equal(isValidPin('123'), false);
+  assert.equal(isValidPin('123a'), false);
+  assert.equal(isValidPin('123456'), false);      // new PINs are 4 digits
+  assert.equal(isValidPin('123456', 6), true);    // an old stored PIN is checked at its own length
+  assert.match((await checkPin(counter, u1, '1234', null))!, /Set a transaction PIN/);
+  assert.match((await checkPin(counter, u1, undefined, hash))!, /4-digit/);
+  assert.equal(await checkPin(counter, u1, '1234', hash), null);
 
   // sequential: a success resets the count, then 5 wrong guesses lock
-  assert.match((await checkPin(counter, u1, '000000', hash))!, /4 attempts left/);
-  assert.equal(await checkPin(counter, u1, '123456', hash), null);
-  for (let i = 1; i < MAX_PIN_FAILURES; i++) assert.match((await checkPin(counter, u1, '000000', hash))!, /Wrong/);
-  assert.match((await checkPin(counter, u1, '000000', hash))!, /locked for 15 minutes/);
-  assert.match((await checkPin(counter, u1, '123456', hash))!, /Too many/);   // even the right PIN waits
+  assert.match((await checkPin(counter, u1, '0000', hash))!, /4 attempts left/);
+  assert.equal(await checkPin(counter, u1, '1234', hash), null);
+  for (let i = 1; i < MAX_PIN_FAILURES; i++) assert.match((await checkPin(counter, u1, '0000', hash))!, /Wrong/);
+  assert.match((await checkPin(counter, u1, '0000', hash))!, /locked for 15 minutes/);
+  assert.match((await checkPin(counter, u1, '1234', hash))!, /Too many/);   // even the right PIN waits
 
   // "restart": a fresh counter over the same DB still sees the lock
   const restarted: PinCounter = { ...counter };
-  assert.match((await checkPin(restarted, u1, '123456', hash))!, /Too many/);
-  assert.equal(await checkPin(counter, u2, '123456', hash), null);           // other users unaffected
+  assert.match((await checkPin(restarted, u1, '1234', hash))!, /Too many/);
+  assert.equal(await checkPin(counter, u2, '1234', hash), null);           // other users unaffected
 
   // parallel: 20 wrong guesses at once compare at most 5 times, then the account is locked
-  const results = await Promise.all(Array.from({ length: 20 }, () => checkPin(counter, u3, '000000', hash)));
+  const results = await Promise.all(Array.from({ length: 20 }, () => checkPin(counter, u3, '0000', hash)));
   assert.equal(results.filter((r) => /Wrong|locked for 15/.test(r!)).length, MAX_PIN_FAILURES);
-  assert.match((await checkPin(counter, u3, '123456', hash))!, /Too many/);
+  assert.match((await checkPin(counter, u3, '1234', hash))!, /Too many/);
 
   // lock expiry: the next attempt starts a fresh count
   await db.query(`update users set pin_locked_until = now() - interval '1 second' where id = $1`, [u3]);
-  assert.equal(await checkPin(counter, u3, '123456', hash), null);
+  assert.equal(await checkPin(counter, u3, '1234', hash), null);
   assert.equal((await db.query<any>(`select pin_failures, pin_locked_until from users where id=$1`, [u3])).rows[0].pin_failures, 0);
 });

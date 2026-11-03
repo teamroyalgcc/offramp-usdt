@@ -30,14 +30,16 @@ export class ExchangeService {
 
   /** Everything the app and the admin Rates page show. Throws only when no rate can be given (sells pause). */
   async getRateInfo() {
-    const market = await this.marketRate().catch((e) => {
-      console.error('[EXCHANGE_SERVICE] market rate:', e.message);
-      return null;
-    });
     const spreadPercent = Number(configService.get('exchange_spread_percent') || 0);
     const manualRate = Number(configService.get('manual_rate_inr')) || null;
     const expires = configService.get('manual_rate_expires_at');
-    const manual = manualRate && expires ? { rate: manualRate, expiresAt: new Date(expires) } : null;
+    const manual = manualRate ? { rate: manualRate, expiresAt: expires ? new Date(expires) : null } : null;
+    const manualActive = !!manual && (!manual.expiresAt || manual.expiresAt.getTime() > Date.now());
+    // The admin's rate is primary; the exchanges are only read when no manual rate is set.
+    const market = manualActive ? null : await this.marketRate().catch((e) => {
+      console.error('[EXCHANGE_SERVICE] market rate:', e.message);
+      return null;
+    });
     // No trustworthy rate: rate null (sells paused), not a 500, so the app and the limits below still load.
     let r: { rate: number; mode: 'live' | 'manual' } | null = null;
     let pausedReason: string | null = null;
@@ -56,7 +58,7 @@ export class ExchangeService {
       sources: market?.sources ?? null,
       updatedAt: market ? new Date(market.updatedAt).toISOString() : null,
       manualRate: r?.mode === 'manual' ? manualRate : null,
-      manualRateExpiresAt: r?.mode === 'manual' ? new Date(expires as string).toISOString() : null,
+      manualRateExpiresAt: r?.mode === 'manual' && expires ? new Date(expires as string).toISOString() : null,
       // Limits the app shows (the DB enforces them): no hardcoded fee/minimums in the app.
       minSellUsdt: Number(configService.get('min_exchange_usdt')),
       minWithdrawalUsdt: Number(configService.get('min_usdt_withdrawal')),
@@ -106,10 +108,11 @@ export class ExchangeService {
     }
   }
 
+  /** The user's orders with the payout bank account (beneficiary name shown in the app's history and receipt). */
   async getOrders(userId: string) {
     const { data, error } = await supabase
       .from('exchange_orders')
-      .select('*')
+      .select('*, bank_accounts(account_holder_name, account_number, ifsc_code, bank_name)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 

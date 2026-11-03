@@ -256,7 +256,7 @@ Only steps 3 and 4 need you.
    3. Copy the transaction hash. Click **Mark as sent**, paste it, and click **Confirm sent**. The system checks the blockchain; if the amount or address is wrong, it says so and nothing is marked.
    4. To refuse, click **Reject** and give a reason. The user is refunded.
 4. Open **KYC** and approve or reject new users. Users without approved KYC cannot sell, withdraw, or add a bank account.
-5. Open **Rates** and check that the user rate looks sensible. You can set a fixed rate for 24 hours. It must be within 10% under the live market, so it can only be set while the live rate works; if the live sources go down later, the fixed rate keeps sells running until it expires.
+5. Open **Rates** and set the rate users get (INR per USDT). This manual rate is the rate: no spread is taken off it and it stays until you change it. If you clear it, the app falls back to the live Indian exchange rate minus the spread.
 
 ### The attention panel, item by item
 
@@ -277,7 +277,7 @@ Only steps 3 and 4 need you.
 - **For a large or unusual order**, check under **Users** that the user's deposits are there and credited.
 - **Never pay because of an email, chat or phone call.** Only orders and withdrawals shown in the admin panel.
 - **Each staff member has their own login.** Superadmins manage accounts in **Role Management**. Delete accounts of people who leave.
-- **Never ask a user for their transaction PIN.** Staff cannot see or reset it. A user who forgot it taps **Forgot PIN?** (Profile → Transaction PIN) and confirms with an email code. After a reset, sells and withdrawals are blocked for 24 hours. Five wrong PINs block them for 15 minutes.
+- **Never ask a user for their transaction PIN.** Staff cannot see or reset it. PINs are 4 digits (users from before this change are asked to set a new 4-digit PIN before their next exchange or withdrawal). A user who forgot it taps **Forgot PIN?** (Profile → Transaction PIN) and confirms with an email code. After a reset, exchanges and withdrawals are blocked for 24 hours. Five wrong PINs block them for 15 minutes.
 - **Freeze** a suspicious account under **Users**. A frozen user is refused on every request.
 
 ### Moving money out of the treasury
@@ -341,7 +341,7 @@ The app is built with **EAS** (Expo) from the `royal_gcc_forex_mobile_app` repo,
    - Google Drive (what the site uses today): replace the file's contents with **Manage versions** so the link stays the same.
    - Not the landing page itself: Cloudflare Workers static files are limited to 25 MB, and the APK is bigger.
 4. Point the website at it once: Cloudflare → Workers → `royal-gcc-landing-page` → Settings → **Build** → Variables → `VITE_APK_URL` = the permanent link → then **Retry/redeploy** the latest build. (Vite reads it at build time, so a redeploy is required after changing it.)
-5. Tell existing users to download and install again from the website. The app has no "update available" prompt.
+5. Publish the update in the admin panel: **Settings → App release**: set *Latest version* to the new `version` from `app.json`, the permanent APK link (R2, `https://…/royalgcc.apk`), optional release notes, and (only if old builds must stop working) *Minimum version*. Every app on an older version then shows "Update available" on its next launch and can download and install the APK from inside the app. A version below the minimum must update before it can continue.
 
 ### Google Play Store
 
@@ -450,8 +450,6 @@ Items that are known and not done. Owner in brackets.
 
 - **"Rent energy" for withdrawals** and a live withdrawal fee quote. Withdrawals use a flat 5 USDT fee, and TronLink burns TRX for each send.
 - **Deposit pause switch.** `system_settings.deposits_enabled` exists but nothing checks it. To stop deposits, tell users and remove the deposit option in an app update.
-- **App update prompt.** Users of the APK are not told a new version exists.
-- **App `versionCode`** is not set (section 7). Set it before the second release.
 - **Invite codes / team commissions.** A referral code exists in the backend, but it is not linked at signup and has no app screen. The client must define the rules first.
 - **Splitting one payout across several bank accounts.**
 - **TDS deduction and reporting** (section 10).
@@ -479,7 +477,8 @@ Items that are known and not done. Owner in brackets.
 | `exchanges_enabled`, `withdrawals_enabled` | true | Pause switches (section 8) |
 | `deposits_enabled` | true | Not used (section 11) |
 | `pinned_treasury_address` | set on first start | Must equal `TREASURY_ADDRESS` (section 3.1) |
-| `manual_rate_inr`, `manual_rate_expires_at` | empty | The Rates page override |
+| `manual_rate_inr` | empty | The Rates page rate (primary; no spread; `manual_rate_expires_at` stays NULL) |
+| `app_latest_version`, `app_min_version`, `app_apk_url`, `app_release_notes` | empty | In-app update (admin panel → Settings → App release) |
 
 Example: raise the minimum sell to 20 USDT:
 

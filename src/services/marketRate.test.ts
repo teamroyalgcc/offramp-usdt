@@ -20,13 +20,14 @@ test('market = lowest live source; missing sources skipped, at least 2 needed; f
   assert.throws(() => pickRate(src(100, 96, null), 1), /disagree/); // 4.2% apart
 });
 
-test('user rate: live = market - spread; manual override capped at market, used alone if live is down, expires', () => {
+test('user rate: manual rate is primary and uncapped; without one, live = market - spread', () => {
   const m = pickRate(src(100.24, 100.02, 100.04), 0)!;
   const now = Date.now(), later = new Date(now + 1000), earlier = new Date(now - 1);
   assert.equal(userRate(m, 1.5, null, now).rate.toFixed(2), '98.52');
-  assert.deepEqual(userRate(m, 1.5, { rate: 97, expiresAt: later }, now), { rate: 97, mode: 'manual' });
-  assert.equal(userRate(m, 1.5, { rate: 120, expiresAt: later }, now).rate, 100.02); // never above market
-  assert.equal(userRate(null, 1.5, { rate: 97, expiresAt: later }, now).rate, 97);   // live down
+  assert.deepEqual(userRate(m, 1.5, { rate: 97, expiresAt: null }, now), { rate: 97, mode: 'manual' });
+  assert.equal(userRate(m, 1.5, { rate: 120, expiresAt: null }, now).rate, 120);   // admin's rate, as set
+  assert.equal(userRate(null, 1.5, { rate: 97, expiresAt: null }, now).rate, 97);  // live down: still works
+  assert.equal(userRate(m, 1.5, { rate: 97, expiresAt: later }, now).mode, 'manual');
   assert.equal(userRate(m, 1.5, { rate: 97, expiresAt: earlier }, now).mode, 'live'); // expired
   assert.throws(() => userRate(null, 1.5, { rate: 97, expiresAt: earlier }, now), /unavailable/);
 });

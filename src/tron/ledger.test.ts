@@ -97,9 +97,9 @@ test('schema.sql money functions', async () => {
   assert.deepEqual(await keyed(10, 'k1'), { success: true, order_id: k1.order_id, duplicate: true });
   assert.deepEqual(await acct(), { a: '90.000000', l: '10.000000' });
   await db.query(`select complete_exchange_order($1, false, 'r')`, [k1.order_id]);
-  assert.match((await order(9)).message, /Minimum sell is 10/);
+  assert.match((await order(9)).message, /Minimum exchange is 10/);
   await db.query(`update system_settings set daily_exchange_usdt = 100`); // today: 50 paid; refunded orders don't count
-  assert.match((await order(50.000001)).message, /Daily sell limit is 100/);
+  assert.match((await order(50.000001)).message, /Daily exchange limit is 100/);
   await db.query(`update system_settings set daily_exchange_usdt = 10000, daily_withdrawal_inr = 8000`);  // INR today: 4500
   assert.match((await order(40)).message, /Daily payout limit is 8000 INR/);
   await db.query(`update exchange_orders set created_at = date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata' - interval '1 second'`);
@@ -107,7 +107,7 @@ test('schema.sql money functions', async () => {
   assert.equal(yesterday.success, true);
   await db.query(`select complete_exchange_order($1, false, 'r')`, [yesterday.order_id]);
   await db.query(`update system_settings set exchanges_enabled = false`);
-  assert.equal((await order(10)).message, 'Sells are paused');
+  assert.equal((await order(10)).message, 'Exchanges are paused');
   await db.query(`update system_settings set exchanges_enabled = true, daily_withdrawal_inr = 500000`);
 
   // USDT withdrawals: one transaction (limits + lock + insert); complete/reject exactly once

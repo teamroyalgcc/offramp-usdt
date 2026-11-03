@@ -5,7 +5,7 @@ import supabase from '../utils/supabase.js';
 import { sendEmail, sendOTPEmail } from '../utils/email.js';
 import { auditService } from '../services/auditService.js';
 import { randomInt } from 'node:crypto';
-import { checkPin, hashPin, isValidPin, PIN_RESET_HOLD_MS } from '../utils/pin.js';
+import { checkPin, hashPin, isValidPin, PIN_CODE_DIGITS, PIN_DIGITS, PIN_RESET_HOLD_MS } from '../utils/pin.js';
 import { pinCounter } from '../services/auth.service.js';
 import { googleAudiences } from '../utils/google.js';
 import { publicUser } from '../utils/publicUser.js';
@@ -245,9 +245,11 @@ export class AuthController {
   static async pinStatus(req: Request, res: Response): Promise<any> {
     try {
       const userId = (req as any).user.id;
-      const { data: user, error } = await supabase.from('users').select('transaction_pin_hash').eq('id', userId).single();
+      const { data: user, error } = await supabase.from('users').select('transaction_pin_hash, pin_digits').eq('id', userId).single();
       if (error) throw error;
-      return res.status(200).json({ hasPin: !!user.transaction_pin_hash });
+      const hasPin = !!user.transaction_pin_hash;
+      // digits: length of the stored PIN. needsUpgrade: an old 6-digit PIN that must become 4 digits before money-out.
+      return res.status(200).json({ hasPin, digits: hasPin ? user.pin_digits : PIN_DIGITS, needsUpgrade: hasPin && user.pin_digits !== PIN_DIGITS });
     } catch (error: any) {
       console.error('PIN Status Error:', error);
       return res.status(500).json({ error: 'Internal server error.' });
@@ -294,16 +296,17 @@ export class AuthController {
     try {
       const userId = (req as any).user.id;
       const { pin, currentPin, emailCode } = req.body ?? {};
-      if (!isValidPin(pin)) return res.status(400).json({ error: 'The PIN must be exactly 6 digits.' });
+      if (!isValidPin(pin)) return res.status(400).json({ error: `The PIN must be exactly ${PIN_DIGITS} digits.` });
 
       const { data: user, error } = await supabase
-        .from('users').select('email, transaction_pin_hash, pin_code_hash, pin_code_expires').eq('id', userId).single();
+        .from('users').select('email, transaction_pin_hash, pin_code_hash, pin_code_expires, pin_digits').eq('id', userId).single();
       if (error) throw error;
 
       const viaCode = currentPin === undefined;
       if (!viaCode) {
         if (!user.transaction_pin_hash) return res.status(400).json({ error: 'Use the email code to set your first PIN.' });
-        const pinError = await checkPin(pinCounter, userId, currentPin, user.transaction_pin_hash);
+        // The current PIN is checked at its own length (6 for accounts from before the 4-digit PIN).
+        const pinError = await checkPin(pinCounter, userId, currentPin, user.transaction_pin_hash, 'transaction PIN', user.pin_digits || PIN_DIGITS);
         if (pinError) return res.status(401).json({ error: pinError });
       } else {
         if (emailCode === undefined) {
@@ -312,7 +315,7 @@ export class AuthController {
         if (!user.pin_code_hash || new Date(user.pin_code_expires) <= new Date()) {
           return res.status(401).json({ error: 'The email code has expired. Please ask for a new one.' });
         }
-        const codeError = await checkPin(pinCounter, userId, emailCode, user.pin_code_hash, 'email code');
+        const codeError = await checkPin(pinCounter, userId, emailCode, user.pin_code_hash, 'email code', PIN_CODE_DIGITS);
         if (codeError) return res.status(401).json({ error: codeError });
       }
 
@@ -320,6 +323,7 @@ export class AuthController {
       const holdUntil = reset ? new Date(Date.now() + PIN_RESET_HOLD_MS).toISOString() : undefined;
       const { error: updateError } = await supabase.from('users').update({
         transaction_pin_hash: await hashPin(pin),
+        pin_digits: PIN_DIGITS,
         pin_code_hash: null,
         pin_code_expires: null,
         ...(holdUntil && { pin_hold_until: holdUntil }),
@@ -331,7 +335,7 @@ export class AuthController {
       if (action !== 'PIN_SET' && user.email) {
         void sendEmail(user.email, 'Your Royal GCC transaction PIN was changed',
           `Your transaction PIN was ${reset ? 'reset with an email code' : 'changed'} on ${new Date().toUTCString()}.` +
-          (reset ? ' Sells and withdrawals are paused for 24 hours.' : '') +
+          (reset ? ' Exchanges and withdrawals are paused for 24 hours.' : '') +
           '\nIf this was not you, contact support immediately.',
         ).catch((e) => console.error('[EMAIL_SERVICE_FAILURE] PIN change notice:', e.message));
       }

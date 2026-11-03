@@ -17,12 +17,13 @@ CREATE TABLE IF NOT EXISTS public.users (
   email_otp_expires TIMESTAMPTZ,
   email_verification_token TEXT,
   password_hash TEXT,
-  transaction_pin_hash TEXT,    -- bcrypt of the 6-digit PIN that confirms sell orders and withdrawals
+  transaction_pin_hash TEXT,    -- bcrypt of the transaction PIN that confirms exchange orders and withdrawals
   pin_failures INTEGER NOT NULL DEFAULT 0, -- wrong PIN / PIN email code guesses since the last success (begin_pin_attempt)
   pin_locked_until TIMESTAMPTZ,  -- 5 wrong guesses lock money-out and PIN changes for 15 minutes
   pin_code_hash TEXT,            -- bcrypt of the emailed code that sets the first PIN or resets a forgotten one
   pin_code_expires TIMESTAMPTZ,
-  pin_hold_until TIMESTAMPTZ,    -- sells and withdrawals are blocked until then after a forgot-PIN reset (24 h)
+  pin_hold_until TIMESTAMPTZ,    -- exchanges and withdrawals are blocked until then after a forgot-PIN reset (24 h)
+  pin_digits INTEGER NOT NULL DEFAULT 6, -- length of the stored PIN; new PINs are 4 digits, money-out needs a 4-digit PIN
   google_id TEXT,
   auth_provider TEXT,
   account_holder_name TEXT,
@@ -149,11 +150,18 @@ CREATE TABLE IF NOT EXISTS public.system_settings (
   exchanges_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   withdrawals_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   pinned_treasury_address TEXT, -- set by the deposit worker on first start; it refuses to start if TREASURY_ADDRESS differs
-  manual_rate_inr NUMERIC CHECK (manual_rate_inr > 0), -- admin override: INR users get per USDT (never above the live market)
-  manual_rate_expires_at TIMESTAMPTZ,                  -- override stops applying after this (set to +24 h)
+  manual_rate_inr NUMERIC CHECK (manual_rate_inr > 0), -- the rate users get per USDT, set by the admin (primary; no spread applied)
+  manual_rate_expires_at TIMESTAMPTZ,                  -- optional expiry; NULL = the manual rate stays until changed
+  app_latest_version TEXT,     -- in-app update: newest APK version, e.g. 1.1.0
+  app_min_version TEXT,        -- builds older than this must update before they can continue
+  app_apk_url TEXT,            -- permanent APK download link (R2)
+  app_release_notes TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO public.system_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- 12-digit numeric order numbers shown to users and admins (exchange orders and USDT withdrawals share one sequence).
+CREATE SEQUENCE IF NOT EXISTS public.order_no_seq START 100000000001 MINVALUE 100000000001 MAXVALUE 999999999999;
 
 -- ============================================================ ledger
 
@@ -244,6 +252,7 @@ CREATE TABLE IF NOT EXISTS public.usdt_withdrawals (
   fee NUMERIC(20, 6) NOT NULL DEFAULT 0,
   net_amount NUMERIC(20, 6) NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+  order_no BIGINT NOT NULL UNIQUE DEFAULT nextval('public.order_no_seq'),
   tx_hash TEXT UNIQUE,
   failure_reason TEXT,
   idempotency_key TEXT UNIQUE,
@@ -318,7 +327,7 @@ BEGIN
 END;
 $$;
 
--- ============================================================ USDT -> INR sell orders
+-- ============================================================ USDT -> INR exchange orders
 -- create (available -> locked, PROCESSING) -> admin pays INR by bank transfer ->
 -- complete: paid (SUCCESS, locked USDT spent) or refund (REFUNDED, locked -> available).
 
@@ -330,6 +339,7 @@ CREATE TABLE IF NOT EXISTS public.exchange_orders (
   rate NUMERIC(20, 2) NOT NULL,
   bank_account_id UUID REFERENCES public.bank_accounts(id),
   status TEXT NOT NULL DEFAULT 'PROCESSING' CHECK (status IN ('PROCESSING', 'SUCCESS', 'REFUNDED')),
+  order_no BIGINT NOT NULL UNIQUE DEFAULT nextval('public.order_no_seq'),
   idempotency_key TEXT UNIQUE,
   payout_reference TEXT,
   failure_reason TEXT,
@@ -366,17 +376,17 @@ BEGIN
   -- Pause flag, minimum and daily limits (IST day), checked under the ledger row lock so parallel orders can't race past.
   SELECT * INTO s FROM public.system_settings WHERE id = 1;
   IF NOT s.exchanges_enabled THEN
-    RETURN json_build_object('success', false, 'message', 'Sells are paused');
+    RETURN json_build_object('success', false, 'message', 'Exchanges are paused');
   END IF;
   IF p_usdt_amount < s.min_exchange_usdt THEN
-    RETURN json_build_object('success', false, 'message', 'Minimum sell is ' || s.min_exchange_usdt || ' USDT');
+    RETURN json_build_object('success', false, 'message', 'Minimum exchange is ' || s.min_exchange_usdt || ' USDT');
   END IF;
   SELECT COALESCE(SUM(usdt_amount), 0), COALESCE(SUM(inr_amount), 0) INTO v_day_usdt, v_day_inr
     FROM public.exchange_orders
    WHERE user_id = p_user_id AND status <> 'REFUNDED'
      AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata';
   IF v_day_usdt + p_usdt_amount > s.daily_exchange_usdt THEN
-    RETURN json_build_object('success', false, 'message', 'Daily sell limit is ' || s.daily_exchange_usdt || ' USDT');
+    RETURN json_build_object('success', false, 'message', 'Daily exchange limit is ' || s.daily_exchange_usdt || ' USDT');
   END IF;
   IF v_day_inr + p_inr_amount > s.daily_withdrawal_inr THEN
     RETURN json_build_object('success', false, 'message', 'Daily payout limit is ' || s.daily_withdrawal_inr || ' INR');
@@ -390,8 +400,8 @@ BEGIN
      SET available_balance = v_avail - p_usdt_amount, locked_balance = v_locked + p_usdt_amount, updated_at = NOW()
    WHERE user_id = p_user_id;
   INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id, description, balance_before, balance_after)
-  VALUES (p_user_id, 'exchange_lock', p_usdt_amount, 'available', 'debit', v_id::text, 'Locked for sell order', v_avail, v_avail - p_usdt_amount),
-         (p_user_id, 'exchange_lock', p_usdt_amount, 'locked', 'credit', v_id::text, 'Locked for sell order', v_locked, v_locked + p_usdt_amount);
+  VALUES (p_user_id, 'exchange_lock', p_usdt_amount, 'available', 'debit', v_id::text, 'Locked for exchange order', v_avail, v_avail - p_usdt_amount),
+         (p_user_id, 'exchange_lock', p_usdt_amount, 'locked', 'credit', v_id::text, 'Locked for exchange order', v_locked, v_locked + p_usdt_amount);
   RETURN json_build_object('success', true, 'order_id', v_id);
 END;
 $$;
@@ -419,14 +429,14 @@ BEGIN
      WHERE user_id = o.user_id;
     INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id, description, balance_before, balance_after)
     VALUES (o.user_id, 'exchange_settle', o.usdt_amount, 'locked', 'debit', o.id::text,
-            'Sell order paid out: ' || COALESCE(p_note, ''), v_locked, v_locked - o.usdt_amount);
+            'Exchange order paid out: ' || COALESCE(p_note, ''), v_locked, v_locked - o.usdt_amount);
   ELSE
     UPDATE public.ledger_accounts
        SET locked_balance = v_locked - o.usdt_amount, available_balance = v_avail + o.usdt_amount, updated_at = NOW()
      WHERE user_id = o.user_id;
     INSERT INTO public.ledger_entries (user_id, type, amount, balance_type, direction, reference_id, description, balance_before, balance_after)
-    VALUES (o.user_id, 'exchange_refund', o.usdt_amount, 'locked', 'debit', o.id::text, 'Sell order refunded', v_locked, v_locked - o.usdt_amount),
-           (o.user_id, 'exchange_refund', o.usdt_amount, 'available', 'credit', o.id::text, 'Sell order refunded', v_avail, v_avail + o.usdt_amount);
+    VALUES (o.user_id, 'exchange_refund', o.usdt_amount, 'locked', 'debit', o.id::text, 'Exchange order refunded', v_locked, v_locked - o.usdt_amount),
+           (o.user_id, 'exchange_refund', o.usdt_amount, 'available', 'credit', o.id::text, 'Exchange order refunded', v_avail, v_avail + o.usdt_amount);
   END IF;
   RETURN json_build_object('user_id', o.user_id, 'status', o.status);
 END;
@@ -517,7 +527,7 @@ CREATE TABLE IF NOT EXISTS public.audit_reports (
 
 -- Atomic: record event -> credit the full amount -> open a sweep (or wake the open one,
 -- so it re-checks the immediate-sweep threshold). No deposit fee: sweep costs are
--- covered by the sell spread. Below-minimum deposits are recorded as 'review' and not credited.
+-- covered by the exchange rate. Below-minimum deposits are recorded as 'review' and not credited.
 CREATE OR REPLACE FUNCTION public.record_deposit(
   p_network TEXT, p_deposit_address_id UUID, p_tx_id TEXT, p_log_index INT, p_from TEXT,
   p_amount_raw NUMERIC, p_block_number BIGINT, p_block_ts TIMESTAMPTZ, p_min_raw NUMERIC

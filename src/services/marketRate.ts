@@ -77,14 +77,12 @@ export async function fetchMarketRate(now = Date.now()): Promise<MarketRate | nu
 }
 
 /**
- * Final rate users get. Live: market minus spread. Manual override (admin, 24 h):
- * the fixed rate, but never above the live market; used alone if live is unavailable.
+ * Final rate users get. The admin's manual rate is primary: used as-is (no spread, no market cap)
+ * until it is changed or its optional expiry passes. Without one, live market minus spread.
  */
-export function userRate(market: MarketRate | null, spreadPercent: number, manual: { rate: number; expiresAt: Date } | null, now: number) {
-  const active = manual && manual.expiresAt.getTime() > now ? manual : null;
-  if (active) {
-    return { rate: market ? Math.min(active.rate, market.rate) : active.rate, mode: 'manual' as const };
-  }
+export function userRate(market: MarketRate | null, spreadPercent: number, manual: { rate: number; expiresAt: Date | null } | null, now: number) {
+  const active = manual && (!manual.expiresAt || manual.expiresAt.getTime() > now) ? manual : null;
+  if (active) return { rate: active.rate, mode: 'manual' as const };
   if (!market) throw new Error('Live rate unavailable, try again shortly');
   return { rate: market.rate * (1 - spreadPercent / 100), mode: 'live' as const };
 }
