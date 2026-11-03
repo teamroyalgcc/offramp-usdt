@@ -8,7 +8,6 @@ import config from '../config/index.js';
 import tronService from './tronService.js';
 
 import configService from './configService.js';
-import exchangeService from './exchangeService.js';
 import { randomUUID } from 'node:crypto';
 import { query } from '../utils/db.js';
 import depositWorker from '../workers/depositWorker.js';
@@ -514,11 +513,10 @@ export class AdminService {
     return { success: true, status: rows[0].r.status };
   }
 
-  async updateRateSettings(input: { spreadPercent?: number; manualRate?: number | null }, adminId: string) {
+  async updateRateSettings(input: { manualRate?: number | null }, adminId: string) {
     const changes: Record<string, unknown> = {};
-    if (input.spreadPercent !== undefined) changes.exchange_spread_percent = input.spreadPercent;
-    // The manual rate is the rate users get, as typed, until the admin changes it (no expiry, no spread).
-    // Only a sanity bound against a fat-finger; the admin panel asks for confirmation before saving.
+    // The manual rate is the rate users get, as typed, until the admin changes it (no expiry, no spread,
+    // no external feed). Only a sanity bound against a fat-finger; the admin panel confirms before saving.
     if (input.manualRate != null && (input.manualRate < 50 || input.manualRate > 500)) {
       throw new Error('The rate must be between 50 and 500 INR per USDT');
     }

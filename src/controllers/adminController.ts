@@ -13,9 +13,8 @@ const updateStatusSchema = z.object({
   note: z.string().optional(),
 });
 
-// manualRate = the rate users get (primary, no expiry); null clears it and the live market minus spread applies.
+// manualRate = the rate users get until it is changed; null clears it, which pauses exchanges.
 const updateRateSchema = z.object({
-  spreadPercent: z.number().min(0).max(10).optional(),
   manualRate: z.number().positive().max(1000).nullable().optional(),
 });
 

@@ -9,12 +9,13 @@ export interface SystemConfig {
   withdrawals_enabled: boolean;
   deposits_enabled: boolean;
   exchanges_enabled: boolean;
-  manual_rate_inr: number | null;         // admin override, see marketRate.userRate
+  manual_rate_inr: number | null;         // the rate users get, set by the admin (see rate.ts)
   manual_rate_expires_at: string | null;
   app_latest_version: string | null;      // in-app update, see appController
   app_min_version: string | null;
   app_apk_url: string | null;
   app_release_notes: string | null;
+  updated_at?: string | null;
 }
 
 export class ConfigService {
